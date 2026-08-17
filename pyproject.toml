@@ -1,0 +1,15 @@
+[project]
+name = "pocket-tts-server"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "asyncio>=4.0.0",
+    "fastapi>=0.141.1",
+    "pocket-tts[quantize]>=2.1.0",
+    "sounddevice>=0.5.0",
+    "soundfile>=0.14.0",
+    "uvicorn>=0.52.3",
+    "wyoming>=1.10.0",
+]
