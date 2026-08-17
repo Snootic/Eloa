@@ -64,7 +64,7 @@ class TTSEngine:
         self,
         language: str,
         temp: float = 0.7,
-        lsd_decode_steps: int = 1,
+        lsd_decode_steps: int = 2,
         noise_clamp: float | None = None,
         eos_threshold: float = -4.0,
         quantize: bool = False,

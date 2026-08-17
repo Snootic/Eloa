@@ -13,7 +13,7 @@ MEDIA_TYPES = {
 
 class SpeechRequest(BaseModel):
     model: str = "english"
-    input: str = Field(min_length=1, max_length=4096)
+    input: str = Field(min_length=1, max_length=264192)
     voice: str = "alba"
     response_format: AudioFormat = AudioFormat.OPUS_32K
     stream_format: Literal["sse", "audio"] = "audio"
