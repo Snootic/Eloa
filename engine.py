@@ -13,6 +13,8 @@ import torch
 from pocket_tts import TTSModel, export_model_state
 from torch import Tensor
 
+import torching
+
 type VoiceState = dict[str, dict[str, Tensor]]
 type ModelKey = tuple[str, float, int, float | None, float, bool]
 
@@ -219,7 +221,7 @@ class TTSEngine:
     def generate_pcm16_output(
         self, text: str, audio_format: AudioFormat = AudioFormat.PCM16
     ) -> bytes:
-        """Test function for"""
+        """Test function for benchmarking"""
         with torch.no_grad():
             audio = self.__model__.generate_audio(
                 text_to_generate=text,

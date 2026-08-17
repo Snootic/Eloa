@@ -1,6 +1,5 @@
 import uvicorn
 
-import torching  # pyright:ignore[reportUnusedImport]
 from engine import TTSEngine
 from server.server import create_http_server
 
