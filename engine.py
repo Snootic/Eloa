@@ -6,7 +6,7 @@ from collections import OrderedDict
 from collections.abc import Iterator
 from enum import StrEnum
 from pathlib import Path
-from typing import cast
+from typing import BinaryIO, cast
 
 import numpy as np
 import torch
@@ -179,27 +179,30 @@ class TTSEngine:
         opus_format: AudioFormat = AudioFormat.OPUS_32K,
     ) -> Iterator[bytes]:
         process = self.spawn_ffmpeg_for_opus(opus_bitrate=opus_format)
-        assert process.stdin is not None
-        assert process.stdout is not None
-        assert process.stderr is not None
+        stdin = process.stdin
+        stdout = process.stdout
+        stderr = process.stderr
+        assert stdin is not None
+        assert stdout is not None
+        assert stderr is not None
         writer_errors: queue.Queue[BaseException] = queue.Queue(maxsize=1)
 
-        def write_audio() -> None:
+        def write_audio(output: BinaryIO) -> None:
             try:
                 with torch.no_grad():
                     for chunk in model.generate_audio_stream(
                         voice, text, frames_after_eos=5, copy_state=True
                     ):
-                        process.stdin.write(self._tensor_to_f32le(chunk))
-            except BaseException as error:
+                        _ = output.write(self._tensor_to_f32le(chunk))
+            except Exception as error:
                 writer_errors.put(error)
             finally:
-                process.stdin.close()
+                output.close()
 
-        writer = threading.Thread(target=write_audio, daemon=True)
+        writer = threading.Thread(target=write_audio, args=(stdin,), daemon=True)
         writer.start()
         try:
-            while encoded_chunk := os.read(process.stdout.fileno(), 4096):
+            while encoded_chunk := os.read(stdout.fileno(), 4096):
                 yield encoded_chunk
         finally:
             if process.poll() is None:
@@ -210,7 +213,7 @@ class TTSEngine:
         if not writer_errors.empty():
             raise writer_errors.get()
         if process.wait() != 0:
-            error = process.stderr.read().decode(errors="replace").strip()
+            error = stderr.read().decode(errors="replace").strip()
             raise RuntimeError(f"Opus encoding failed: {error}")
 
     def generate(

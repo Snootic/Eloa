@@ -5,8 +5,9 @@ import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
 from time import perf_counter
+from typing import BinaryIO
 
-import sounddevice as sd
+import sounddevice as sd  # pyright:ignore[reportMissingTypeStubs]
 
 from engine import AudioFormat, TTSEngine
 
@@ -78,7 +79,7 @@ def run_benchmark(engine: TTSEngine, text: str, sample_rate: int) -> None:
     print("\nComparison")
     print(
         "  Streaming first-audio advantage: "
-        f"{non_streaming.elapsed_seconds - (streaming.first_audio_seconds or 0):.2f}s"
+        + f"{non_streaming.elapsed_seconds - (streaming.first_audio_seconds or 0):.2f}s"
     )
     print(
         "  Total throughput winner:          "
@@ -148,25 +149,28 @@ def decode_ogg_opus(opus_chunks: Iterator[bytes], sample_rate: int) -> Iterator[
         stderr=subprocess.PIPE,
         bufsize=0,
     )
-    assert decoder.stdin is not None
-    assert decoder.stdout is not None
-    assert decoder.stderr is not None
+    stdin = decoder.stdin
+    stdout = decoder.stdout
+    stderr = decoder.stderr
+    assert stdin is not None
+    assert stdout is not None
+    assert stderr is not None
 
-    def send_opus() -> None:
+    def send_opus(output: BinaryIO) -> None:
         try:
             for chunk in opus_chunks:
-                decoder.stdin.write(chunk)
+                _ = output.write(chunk)
         finally:
-            decoder.stdin.close()
+            output.close()
 
-    sender = threading.Thread(target=send_opus, daemon=True)
+    sender = threading.Thread(target=send_opus, args=(stdin,), daemon=True)
     sender.start()
-    while pcm16_chunk := os.read(decoder.stdout.fileno(), 4096):
+    while pcm16_chunk := os.read(stdout.fileno(), 4096):
         yield pcm16_chunk
 
     sender.join()
     if decoder.wait() != 0:
-        error = decoder.stderr.read().decode(errors="replace").strip()
+        error = stderr.read().decode(errors="replace").strip()
         raise RuntimeError(f"Opus decoding failed: {error}")
 
 
