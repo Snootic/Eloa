@@ -1,15 +1,28 @@
 [project]
 name = "pocket-tts-server"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "Universal text-to-speech server with pluggable providers"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "asyncio>=4.0.0",
+    "einops>=0.7.0",
     "fastapi>=0.141.1",
+    "numpy>=2.0.0",
     "pocket-tts[quantize]>=2.1.0",
+    "python-multipart>=0.0.9",
     "sounddevice>=0.5.0",
     "soundfile>=0.14.0",
+    "tiktoken>=0.8.0",
     "uvicorn>=0.52.3",
+    "websockets>=15.0",
     "wyoming>=1.10.0",
 ]
+
+[project.entry-points."tts_core.providers"]
+fish-s1-mini = "providers.fish_s1_mini:FishS1MiniProvider"
+pocket-tts = "providers.pocket_tts:PocketTTSProvider"
+
+[tool.ruff]
+# Vendored upstream inference code is kept close to its source.
+extend-exclude = ["providers/fish_s1_mini/_upstream"]
