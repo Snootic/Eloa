@@ -183,6 +183,25 @@ concurrent long 0.6B requests also fit (10.80 GB total). The 1.7B fits three
 short or two long requests. These concurrency figures come from separate
 processes — the engine serializes generation per model key.
 
+### Quantization
+
+Any GGUF quantization works by pointing `talker` and `codec` at the matching
+files; no separate engine path is needed. Measured with this runtime:
+
+- **Q4_K_M 0.6B talker is not usable.** Whisper transcribes the output as
+  `[música]`, including when paired with the Q8 tokenizer. The Q4 tokenizer
+  itself is fine: Q8 talker + Q4 tokenizer matches Q8 output.
+- **Q4_K_M 1.7B is intelligible**, but peaks at 3.26 GB for 13 s and 3.51 GB
+  for 24 s.
+- **Q8_0 0.6B is the quality/VRAM sweet spot**: 2.22 GB for 13 s and
+  3.11–3.32 GB for 17–26 s. For a hard 3 GB *process* ceiling, keep utterances
+  around 13 s; a 20–30 s request is 0.1–0.3 GB over. The OS/desktop also adds
+  roughly 1–1.7 GB to total GPU usage, so 3 GB *total* is not achievable at
+  these contexts.
+
+`codec_chunk_dur: 4` is the speed/VRAM default recommendation; `1` saves about
+0.2 GB at 26 s but is slower. These are ASR checks, not listening tests.
+
 ## FishAudio S1-mini
 
 `provider: "fish-s1-mini"` loads [`fishaudio/s1-mini`](https://huggingface.co/fishaudio/s1-mini)
