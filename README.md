@@ -17,6 +17,7 @@ tts_core/              provider-agnostic core
 providers/             officially supported providers
   pocket_tts.py        Pocket TTS adapter
   kokoro.py            Kokoro-82M, CPU-first with built-in voices
+  qwen3_tts.py         Qwen3-TTS via qwentts.cpp (Vulkan/CUDA/CPU)
   fish_s1_mini/        FishAudio S1-mini adapter + vendored inference code
   chatterbox.py        Chatterbox / Chatterbox-Turbo (optional package)
   f5_tts.py            F5-TTS (optional package)
@@ -116,6 +117,62 @@ Chinese. The provider creates the matching G2P pipeline per voice, so no
 
 Measured here: **3.2–3.5× realtime on CPU with 4 threads** (3.3 s audio in
 ~1 s), including Portuguese. `GET /v1/audio/providers` lists all 54 voices.
+
+## Qwen3-TTS (GGML / Vulkan)
+
+`provider: "qwen3-tts"`, models `qwen3-tts-0.6b` (default) and
+`qwen3-tts-1.7b`. This runs the C++ [qwentts.cpp](https://github.com/ServeurpersoCom/qwentts.cpp)
+port through GGML, so no PyTorch or OpenVINO model runs at request time. The
+0.6B Base model clones a voice from a reference clip; its 1024-dim speaker
+embedding is extracted once and cached as a `.spk` file.
+
+Build the engine and fetch the two GGUFs:
+
+```sh
+git clone --recurse-submodules https://github.com/ServeurpersoCom/qwentts.cpp
+cd qwentts.cpp && ./buildvulkan.sh   # or buildsycl.sh / buildcuda.sh / buildcpu.sh
+
+mkdir -p models
+hf download Serveurperso/Qwen3-TTS-GGUF \
+  qwen-talker-0.6b-base-Q8_0.gguf \
+  qwen-tokenizer-12hz-Q8_0.gguf --local-dir models
+```
+
+Point the provider at both binaries and the model files:
+
+```json
+{
+  "provider": "qwen3-tts",
+  "model": "qwen3-tts-0.6b",
+  "voice": "larissa",
+  "input": "Olá, esta é uma demonstração do Qwen3 TTS.",
+  "options": {
+    "talker": "/path/to/qwen-talker-0.6b-base-Q8_0.gguf",
+    "codec": "/path/to/qwen-tokenizer-12hz-Q8_0.gguf",
+    "binary": "/path/to/qwentts.cpp/build/qwen-tts",
+    "codec_binary": "/path/to/qwentts.cpp/build/qwen-codec",
+    "device": "Vulkan0",
+    "language": "Portuguese"
+  }
+}
+```
+
+Supported options are `talker`, `codec`, `binary`, `codec_binary`, `device`,
+`language`, `seed`, `temperature`, `top_k`, `top_p`, `repetition_penalty`,
+`max_new_tokens`, and `timeout`. `language` defaults to `auto`; the engine
+supports Chinese, English, Japanese, Korean, German, French, Russian,
+Portuguese, Spanish, and Italian.
+
+Reference clips can be any audio format: the provider resamples them to 24 kHz
+with ffmpeg, runs `qwen-codec`, and caches the `.spk` embedding. Exporting a
+voice writes the `.spk` into `voices/`, so later requests only need
+`voice`/`options`. The 0.6B model needs about 1.3 GB of GGUF weights.
+
+Measured here with the 0.6B Q8 model on an Arc B580: **5.3× realtime warm**
+(13.0 s audio in 2.5 s), and **2.2× end-to-end through the provider** for a
+6.3 s sentence including process and model startup. OpenVINO GenAI also has a
+Qwen3-TTS pipeline, but it measured 0.5–0.8× on the same GPU, so it is not the
+provider used here.
 
 ## FishAudio S1-mini
 
@@ -235,6 +292,7 @@ Measured on this workstation (~2.5 s utterances; CPU rows use 4 threads):
 | --- | --- | ---: |
 | Pocket TTS | CPU | 2.8× realtime |
 | Kokoro-82M | CPU | 3.2–3.5× realtime |
+| Qwen3-TTS 0.6B | Arc B580, Vulkan | 5.3× warm; 2.2× via provider |
 | **Chatterbox-Turbo (ONNX)** | **Arc B580, OpenVINO** | **0.79–0.84×** |
 | FishAudio S1-mini | Arc B580, OpenVINO | 0.25× |
 | Chatterbox-Turbo | CPU | 0.19× |

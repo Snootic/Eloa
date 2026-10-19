@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # OpenVINO providers are imported before torch-dependent ones so ov.Core()
 # initializes while the Intel GPU is still visible.
 _BUILTINS = (
+    ("providers.qwen3_tts", "Qwen3TTSProvider"),
     ("providers.chatterbox_onnx", "ChatterboxONNXProvider"),
     ("providers.fish_s1_mini", "FishS1MiniProvider"),
     ("providers.pocket_tts", "PocketTTSProvider"),
