@@ -9,7 +9,7 @@ from typing import BinaryIO
 
 import sounddevice as sd  # pyright:ignore[reportMissingTypeStubs]
 
-from engine import AudioFormat, TTSEngine
+from tts_core import AudioFormat, TTSEngine
 
 
 @dataclass
@@ -60,9 +60,9 @@ def benchmark_streaming_pcm16(
 def benchmark_pcm16_output(
     engine: TTSEngine, text: str, sample_rate: int
 ) -> Performance:
-    """Measure the non-streaming generate_pcm16_output implementation."""
+    """Measure the non-streaming generate_full implementation."""
     started_at = perf_counter()
-    audio = engine.generate_pcm16_output(text, AudioFormat.PCM16)
+    audio = engine.generate_full(text, AudioFormat.PCM16)
     finished_at = perf_counter()
     return Performance(
         audio_seconds=len(audio) / (sample_rate * 2),
@@ -207,7 +207,7 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-model = TTSEngine("portuguese", "camilly-portuguese", None)
+engine = TTSEngine(model="portuguese", voice="camilly-portuguese")
 
 text = """
 Me vejo no espelho, mas não me reconheço. Confesso que até de mim às vezes eu tenho medo. Nenhum sentimento, ou arrependimento, tudo se perdeu como folhas para o vento. Se sobrou algo de mim, no fundo lá dentro, luto para encontrar mas no fim eu nunca venço. E eu tento, mas é só perda de tempo, cada dia estou mais frio perdido nos pensamentos. Não preciso de razão, eu escolhi cair para dar de cara no chão. No meio da multidão, percebo a solidão, depois que você foi aqui virou escuridão. E quem vai entender? Se quero para mim morrer? Tanto faz, não importa mais nada e mais ninguém, não estou me importando nem comigo também...
@@ -215,13 +215,13 @@ Me vejo no espelho, mas não me reconheço. Confesso que até de mim às vezes e
 
 selected_format = AudioFormat.OPUS_24K
 
-sample_rate = model.model.sample_rate
+sample_rate = engine.sample_rate
 
 if args.benchmark:
-    run_benchmark(model, text, sample_rate)
+    run_benchmark(engine, text, sample_rate)
     raise SystemExit(0)
 
-streamed_chunks = model.generate_stream(text, selected_format)
+streamed_chunks = engine.generate_stream(text, selected_format)
 
 match selected_format:
     case AudioFormat.PCM16:

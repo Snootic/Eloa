@@ -1,11 +1,13 @@
 import uvicorn
 
-from engine import TTSEngine
 from server.server import create_http_server
+from tts_core import TTSEngine
 
 if __name__ == "__main__":
     engine = TTSEngine(
-        language="portuguese", voice_name="camilly-portuguese", voice_path=None
+        provider="pocket-tts",
+        model="portuguese",
+        voice="camilly-portuguese",
     )
 
     http_server = create_http_server(engine)
