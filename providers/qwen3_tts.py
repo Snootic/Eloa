@@ -42,6 +42,7 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "top_p": None,
     "repetition_penalty": None,
     "max_new_tokens": None,
+    "codec_chunk_dur": None,
     "timeout": 300.0,
 }
 ALLOWED_OPTIONS = frozenset(DEFAULT_OPTIONS)
@@ -54,6 +55,7 @@ PER_REQUEST_OPTIONS = frozenset(
         "top_p",
         "repetition_penalty",
         "max_new_tokens",
+        "codec_chunk_dur",
         "timeout",
     }
 )
@@ -130,6 +132,7 @@ class Qwen3TTSModel(SynthesisModel):
                     str(source.resolve()),
                     str(stat.st_size),
                     str(stat.st_mtime_ns),
+                    str(self._talker),
                     str(self._codec),
                     self._device,
                 )
@@ -245,6 +248,8 @@ class Qwen3TTSModel(SynthesisModel):
             command += ["--rep-pen", str(float(opts["repetition_penalty"]))]
         if opts["max_new_tokens"] is not None:
             command += ["--max-new", str(int(opts["max_new_tokens"]))]
+        if opts["codec_chunk_dur"] is not None:
+            command += ["--codec-chunk-dur", str(float(opts["codec_chunk_dur"]))]
 
         payload = self._run(command, text=text, timeout=float(opts["timeout"]))
         if not payload:

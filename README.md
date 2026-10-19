@@ -160,9 +160,9 @@ Point the provider at both binaries and the model files:
 
 Supported options are `talker`, `codec`, `binary`, `codec_binary`, `device`,
 `language`, `seed`, `temperature`, `top_k`, `top_p`, `repetition_penalty`,
-`max_new_tokens`, and `timeout`. `language` defaults to `auto`; the engine
-supports Chinese, English, Japanese, Korean, German, French, Russian,
-Portuguese, Spanish, and Italian.
+`max_new_tokens`, `codec_chunk_dur`, and `timeout`. `language` defaults to
+`auto`; the engine supports Chinese, English, Japanese, Korean, German, French,
+Russian, Portuguese, Spanish, and Italian.
 
 Reference clips can be any audio format: the provider resamples them to 24 kHz
 with ffmpeg, runs `qwen-codec`, and caches the `.spk` embedding. Exporting a
@@ -174,6 +174,14 @@ Measured here with the 0.6B Q8 model on an Arc B580: **5.3× realtime warm**
 6.3 s sentence including process and model startup. OpenVINO GenAI also has a
 Qwen3-TTS pipeline, but it measured 0.5–0.8× on the same GPU, so it is not the
 provider used here.
+
+On the 12.8 GB card, 0.6B Q8 peaks at **2.2 GB** for a 13 s request and
+**3.3 GB** for 80 s with `codec_chunk_dur: 4` (5.2 GB at the default 24 s).
+1.7B Q8 peaks at **3.3 GB** for 12 s and **4.4 GB** for 80 s. Four concurrent
+0.6B short requests fit (12.66 GB total); with `codec_chunk_dur: 4`, three
+concurrent long 0.6B requests also fit (10.80 GB total). The 1.7B fits three
+short or two long requests. These concurrency figures come from separate
+processes — the engine serializes generation per model key.
 
 ## FishAudio S1-mini
 
