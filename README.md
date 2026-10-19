@@ -169,13 +169,19 @@ Install each in its own environment (they pin their own torch):
 
 ```sh
 uv venv ~/.venvs/chatterbox --python 3.12
+uv pip install --python ~/.venvs/chatterbox/bin/python -e .
 uv pip install --python ~/.venvs/chatterbox/bin/python chatterbox-tts
 PYTHONPATH=. ~/.venvs/chatterbox/bin/python main.py
 
 uv venv ~/.venvs/f5 --python 3.12
+uv pip install --python ~/.venvs/f5/bin/python -e .
 uv pip install --python ~/.venvs/f5/bin/python f5-tts
 PYTHONPATH=. ~/.venvs/f5/bin/python main.py
 ```
+
+Installing the provider last lets it pin torch; the project's other providers
+may then run with that torch version instead. Keep the default `.venv`
+unchanged if you only need Pocket/Fish.
 
 The registry skips a provider whose package is missing, so the default
 environment keeps working. F5-TTS requires the reference transcript: put a
