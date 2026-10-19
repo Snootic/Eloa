@@ -100,7 +100,9 @@ class FishS1MiniModel(SynthesisModel):
     def sample_rate(self) -> int:
         return self._codec.sample_rate
 
-    def load_voice(self, source: str | Path | None) -> VoiceState:
+    def load_voice(
+        self, source: str | Path | None, *, name: str | None = None
+    ) -> VoiceState:
         text = str(self._options["reference_text"])
         if source is None:
             return FishVoice(None, text)

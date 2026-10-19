@@ -28,12 +28,14 @@ class SynthesisModel(ABC):
         """Sample rate of the audio this model produces."""
 
     @abstractmethod
-    def load_voice(self, source: str | Path | None) -> VoiceState:
+    def load_voice(
+        self, source: str | Path | None, *, name: str | None = None
+    ) -> VoiceState:
         """Build conditioning state from a local file, reference, or ``None``.
 
-        ``None`` is passed only for a provider's ``default_voice`` when that
-        provider declares no ``default_voice_source``; providers that cannot
-        generate an unconditioned voice should raise ``ValueError``.
+        ``None`` is passed for a provider ``default_voice`` with no source and
+        for names listed in ``TTSProvider.builtin_voices``; ``name`` carries
+        the requested voice so providers with built-in voices can select it.
         """
 
     @abstractmethod
@@ -94,6 +96,13 @@ class TTSProvider(ABC):
 
     available_models: ClassVar[tuple[str, ...]] = ()
     """Model aliases clients can select from a drop-down."""
+
+    builtin_voices: ClassVar[tuple[str, ...]] = ()
+    """Voices shipped by the provider rather than exported under ``voices/``."""
+
+    def voice_exists(self, name: str) -> bool:
+        """Whether ``name`` is a built-in voice this provider can load."""
+        return name in self.builtin_voices
 
     @abstractmethod
     def load_model(self, options: ModelOptions) -> SynthesisModel:

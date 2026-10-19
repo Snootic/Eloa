@@ -107,7 +107,9 @@ class ChatterboxOVModel(SynthesisModel):
                 logger.debug("Chatterbox %s failed on %s", name, device, exc_info=True)
         raise RuntimeError(f"Could not compile {name} on {devices}")
 
-    def load_voice(self, source: str | Path | None) -> VoiceState:
+    def load_voice(
+        self, source: str | Path | None, *, name: str | None = None
+    ) -> VoiceState:
         if source is None:
             raise ValueError(
                 "Chatterbox Turbo requires a reference clip for voice cloning"

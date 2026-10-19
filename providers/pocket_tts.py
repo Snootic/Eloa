@@ -37,7 +37,9 @@ class PocketTTSModel(SynthesisModel):
     def sample_rate(self) -> int:
         return self._model.sample_rate
 
-    def load_voice(self, source: str | Path | None) -> VoiceState:
+    def load_voice(
+        self, source: str | Path | None, *, name: str | None = None
+    ) -> VoiceState:
         if source is None:
             raise ValueError("Pocket TTS requires an audio reference for every voice")
         return self._model.get_state_for_audio_prompt(source)

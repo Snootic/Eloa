@@ -70,7 +70,9 @@ class ChatterboxModel(SynthesisModel):
     def sample_rate(self) -> int:
         return int(self._model.sr)
 
-    def load_voice(self, source: str | Path | None) -> VoiceState:
+    def load_voice(
+        self, source: str | Path | None, *, name: str | None = None
+    ) -> VoiceState:
         return ChatterboxVoice(Path(source) if source is not None else None)
 
     def synthesize(

@@ -16,6 +16,7 @@ tts_core/              provider-agnostic core
   engine.py            model cache, voice cache, speech streams
 providers/             officially supported providers
   pocket_tts.py        Pocket TTS adapter
+  kokoro.py            Kokoro-82M, CPU-first with built-in voices
   fish_s1_mini/        FishAudio S1-mini adapter + vendored inference code
   chatterbox.py        Chatterbox / Chatterbox-Turbo (optional package)
   f5_tts.py            F5-TTS (optional package)
@@ -89,6 +90,32 @@ curl -F name=my-voice \
 The clone endpoint accepts `file` (32 MiB max), `name`, optional `provider`,
 `reference_text`, and `overwrite`. It returns the exported file name and the
 provider's refreshed voice list.
+
+## Kokoro (CPU)
+
+`provider: "kokoro"`, `model: "kokoro-82m"`. Kokoro is 82M parameters,
+Apache-2.0, and ships 54 named voices instead of reference clips. Install:
+
+```sh
+uv sync --extra kokoro
+```
+
+```sh
+curl -X POST http://127.0.0.1:8082/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -d '{"provider": "kokoro", "voice": "af_heart", "input": "Hello from Kokoro.", "response_format": "opus_24k"}' \
+  --output kokoro.ogg
+```
+
+Voices are prefixed by language: `af_*`/`am_*` English, `bf_*`/`bm_*` British,
+`ef_*`/`em_*` Spanish, `ff_*` French, `hf_*`/`hm_*` Hindi, `if_*`/`im_*`
+Italian, `jf_*`/`jm_*` Japanese, `pf_*`/`pm_*` Portuguese, `zf_*`/`zm_*`
+Chinese. The provider creates the matching G2P pipeline per voice, so no
+`lang_code` option is required. `options.speed`, `options.threads`, and
+`options.device` (`cpu` default) are supported.
+
+Measured here: **3.2–3.5× realtime on CPU with 4 threads** (3.3 s audio in
+~1 s), including Portuguese. `GET /v1/audio/providers` lists all 54 voices.
 
 ## FishAudio S1-mini
 
@@ -207,6 +234,7 @@ Measured on this workstation (~2.5 s utterances; CPU rows use 4 threads):
 | Model | Device | Speed |
 | --- | --- | ---: |
 | Pocket TTS | CPU | 2.8× realtime |
+| Kokoro-82M | CPU | 3.2–3.5× realtime |
 | **Chatterbox-Turbo (ONNX)** | **Arc B580, OpenVINO** | **0.79–0.84×** |
 | FishAudio S1-mini | Arc B580, OpenVINO | 0.25× |
 | Chatterbox-Turbo | CPU | 0.19× |

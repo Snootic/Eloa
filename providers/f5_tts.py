@@ -50,7 +50,9 @@ class F5Model(SynthesisModel):
     def sample_rate(self) -> int:
         return int(self._model.target_sample_rate)
 
-    def load_voice(self, source: str | Path | None) -> VoiceState:
+    def load_voice(
+        self, source: str | Path | None, *, name: str | None = None
+    ) -> VoiceState:
         if source is None:
             raise ValueError(
                 "F5-TTS requires a reference clip and transcript for every voice"

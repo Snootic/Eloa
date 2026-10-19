@@ -133,6 +133,8 @@ class TTSEngine:
         provider = active.provider
         if voice_name == provider.default_voice:
             return provider.default_voice_source
+        if provider.voice_exists(voice_name):
+            return None
         raise FileNotFoundError(
             f"Voice {voice_name!r} was not found at {path} "
             "and no audio conditioning was supplied"
@@ -158,7 +160,7 @@ class TTSEngine:
         state = cache.get(name)
         if state is None:
             state = active.synthesis.load_voice(
-                self._resolve_voice_source(active, name, source)
+                self._resolve_voice_source(active, name, source), name=name
             )
             cache[name] = state
 
@@ -309,7 +311,7 @@ class TTSEngine:
                 self._default_model,
                 options,
             )
-            state = active.synthesis.load_voice(sample_path)
+            state = active.synthesis.load_voice(sample_path, name=voice_name)
             destination = (
                 self._voices_dir / f"{voice_name}.{active.provider.voice_extension}"
             )
@@ -322,16 +324,17 @@ class TTSEngine:
     # ------------------------------------------------------------------
 
     def available_voices(self, provider_name: str) -> list[str]:
-        """Voice names already exported for ``provider_name`` on disk."""
+        """Built-in and exported voice names for ``provider_name``."""
         provider = self._registry.get(provider_name)
-        if not self._voices_dir.is_dir():
-            return []
-        suffix = f".{provider.voice_extension}"
-        return sorted(
-            entry.name.removesuffix(suffix)
-            for entry in self._voices_dir.iterdir()
-            if entry.is_file() and entry.name.endswith(suffix)
-        )
+        names = set(provider.builtin_voices)
+        if self._voices_dir.is_dir():
+            suffix = f".{provider.voice_extension}"
+            names.update(
+                entry.name.removesuffix(suffix)
+                for entry in self._voices_dir.iterdir()
+                if entry.is_file() and entry.name.endswith(suffix)
+            )
+        return sorted(names)
 
     def _require_active(self) -> ActiveModel:
         if self._active is None:

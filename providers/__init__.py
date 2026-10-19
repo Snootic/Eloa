@@ -23,6 +23,7 @@ _BUILTINS = (
     ("providers.chatterbox_onnx", "ChatterboxONNXProvider"),
     ("providers.fish_s1_mini", "FishS1MiniProvider"),
     ("providers.pocket_tts", "PocketTTSProvider"),
+    ("providers.kokoro", "KokoroProvider"),
     ("providers.chatterbox", "ChatterboxProvider"),
     ("providers.f5_tts", "F5TTSProvider"),
 )
