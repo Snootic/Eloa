@@ -1,3 +1,4 @@
+import json
 import re
 import tempfile
 from pathlib import Path
@@ -77,14 +78,28 @@ async def clone_voice(
     name: Annotated[str, Form()],
     provider: Annotated[str | None, Form()] = None,
     reference_text: Annotated[str | None, Form()] = None,
+    options: Annotated[str | None, Form()] = None,
     overwrite: Annotated[bool, Form()] = False,
 ) -> dict[str, object]:
     """Encode a reference clip into a reusable voice for one provider.
 
     The transcript is optional; when supplied it is passed to providers that
     condition on reference text (FishAudio) and persisted next to the voice.
+    ``options`` is a JSON object of provider options, matching the speech body.
     """
     engine: TTSEngine = request.app.state.engine
+
+    clone_options: dict[str, object] = {}
+    if options:
+        try:
+            decoded = json.loads(options)
+        except json.JSONDecodeError as error:
+            raise HTTPException(
+                status_code=400, detail=f"options is not valid JSON: {error}"
+            ) from error
+        if not isinstance(decoded, dict):
+            raise HTTPException(status_code=400, detail="options must be an object")
+        clone_options = decoded
 
     if not VOICE_NAME_PATTERN.fullmatch(name):
         raise HTTPException(
@@ -137,8 +152,12 @@ async def clone_voice(
             )
 
         try:
-            destination = engine.clone_voice(source, name, provider=provider_name)
+            destination = engine.clone_voice(
+                source, name, provider=provider_name, options=clone_options
+            )
         except NotImplementedError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except (FileNotFoundError, ValueError) as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 
     return {

@@ -89,8 +89,9 @@ curl -F name=my-voice \
 ```
 
 The clone endpoint accepts `file` (32 MiB max), `name`, optional `provider`,
-`reference_text`, and `overwrite`. It returns the exported file name and the
-provider's refreshed voice list.
+`reference_text`, `options` (a JSON object, matching the speech body), and
+`overwrite`. It returns the exported file name and the provider's refreshed
+voice list.
 
 ## Kokoro (CPU)
 
