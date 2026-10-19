@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 _BUILTINS = (
     ("providers.fish_s1_mini", "FishS1MiniProvider"),
     ("providers.pocket_tts", "PocketTTSProvider"),
+    ("providers.chatterbox", "ChatterboxProvider"),
+    ("providers.f5_tts", "F5TTSProvider"),
 )
 
 __all__ = ["register_builtin_providers"]

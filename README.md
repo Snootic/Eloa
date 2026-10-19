@@ -17,6 +17,8 @@ tts_core/              provider-agnostic core
 providers/             officially supported providers
   pocket_tts.py        Pocket TTS adapter
   fish_s1_mini/        FishAudio S1-mini adapter + vendored inference code
+  chatterbox.py        Chatterbox / Chatterbox-Turbo (optional package)
+  f5_tts.py            F5-TTS (optional package)
 server/                FastAPI HTTP + WebSocket surface
 main.py                entrypoint
 ```
@@ -152,6 +154,50 @@ without changing throughput.
 License: the weights are CC-BY-NC-SA-4.0 and the vendored fish-speech code is
 under the Fish Audio Research License. Research and non-commercial use only;
 commercial use requires a separate license from Fish Audio.
+
+## Optional providers: Chatterbox and F5-TTS
+
+Two more providers are included but not installed by default because their
+packages pin incompatible torch/numpy stacks:
+
+| Provider | Models | Reference audio | License |
+| --- | --- | --- | --- |
+| `chatterbox` | `chatterbox`, `chatterbox-turbo` | audio prompt only | MIT |
+| `f5-tts` | `F5TTS_v1_Base`, `F5TTS_Base`, `E2TTS_Base` | audio + transcript | code MIT, weights CC-BY-NC-4.0 |
+
+Install each in its own environment (they pin their own torch):
+
+```sh
+uv venv ~/.venvs/chatterbox --python 3.12
+uv pip install --python ~/.venvs/chatterbox/bin/python chatterbox-tts
+PYTHONPATH=. ~/.venvs/chatterbox/bin/python main.py
+
+uv venv ~/.venvs/f5 --python 3.12
+uv pip install --python ~/.venvs/f5/bin/python f5-tts
+PYTHONPATH=. ~/.venvs/f5/bin/python main.py
+```
+
+The registry skips a provider whose package is missing, so the default
+environment keeps working. F5-TTS requires the reference transcript: put a
+`<voice>.lab` sidecar next to the clip or pass `options.reference_text`.
+Chatterbox uses the clip itself; its transcript is ignored.
+
+Measured on this workstation (CPU, 4 threads, ~2.5 s utterances; Pocket on the
+same CPU):
+
+| Model | Speed |
+| --- | ---: |
+| Pocket TTS | 2.8× realtime |
+| FishAudio S1-mini (Arc B580, OpenVINO) | 0.25× |
+| Chatterbox-Turbo | 0.19× |
+| F5-TTS, 8 steps | 0.10× |
+| Chatterbox (original) | 0.07× |
+| F5-TTS, 16 steps | 0.04× |
+
+These are speed measurements only — quality was not evaluated by listening.
+Chatterbox-Turbo is the closest CPU-competitive option of the three, but
+Pocket TTS remains far faster on CPU. Chatterbox's ONNX Turbo model is a
+potential OpenVINO path; F5-TTS would need a separate OpenVINO conversion.
 
 ## Add a provider
 
