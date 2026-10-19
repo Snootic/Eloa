@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TTS HTTP streaming test</title>
+    <style>
+      body { font: 16px system-ui, sans-serif; margin: 2rem auto; max-width: 52rem; }
+      label, textarea, input, select, button { display: block; width: 100%; box-sizing: border-box; }
+      label { margin-top: 1rem; font-weight: 600; }
+      input, textarea, select, button { margin-top: .35rem; padding: .6rem; }
+      textarea { min-height: 6rem; resize: vertical; }
+      button { cursor: pointer; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1rem; }
+      .inline { display: flex; gap: .5rem; margin-top: .35rem; }
+      #status { background: #f3f4f6; padding: .75rem; white-space: pre-wrap; }
+      nav { margin-bottom: 1rem; }
+      nav a { margin-right: .75rem; }
+      small { font-weight: 400; color: #4b5563; }
+    </style>
+  </head>
+  <body>
+    <nav>
+      <a href="test_http.html">HTTP</a>
+      <a href="test_websocket.html">WebSocket</a>
+      <a href="test_clone.html">Voice cloning</a>
+    </nav>
+    <h1>TTS HTTP streaming test</h1>
+
+    <label>
+      Speech endpoint
+      <input id="url" value="http://127.0.0.1:8082/v1/audio/speech">
+    </label>
+
+    <div class="row">
+      <label>
+        Provider
+        <select id="provider"></select>
+      </label>
+      <label>
+        Model
+        <select id="model"></select>
+      </label>
+    </div>
+
+    <label>
+      Voice
+      <select id="voice"></select>
+    </label>
+
+    <label>
+      Options <small>(provider-specific JSON, optional)</small>
+      <textarea id="options" spellcheck="false" placeholder='{"quantize": "int8", "temperature": 0.8}'></textarea>
+    </label>
+
+    <label>
+      Text
+      <textarea id="text">Hello from the HTTP streaming client.</textarea>
+    </label>
+
+    <label>
+      Response format
+      <select id="format">
+        <option value="pcm16">PCM16 (streaming playback)</option>
+        <option value="opus_24k">Opus 24 kbps</option>
+        <option value="opus_32k">Opus 32 kbps</option>
+      </select>
+    </label>
+
+    <div class="inline">
+      <button id="speak">Speak</button>
+      <button id="refresh" type="button">Refresh providers</button>
+    </div>
+
+    <audio id="opus-player" controls></audio>
+    <p id="status">Ready.</p>
+
+    <script>
+      const button = document.querySelector("#speak");
+      const refresh = document.querySelector("#refresh");
+      const status = document.querySelector("#status");
+      const urlEl = document.querySelector("#url");
+      const providerEl = document.querySelector("#provider");
+      const modelEl = document.querySelector("#model");
+      const voiceEl = document.querySelector("#voice");
+      const optionsEl = document.querySelector("#options");
+      const textEl = document.querySelector("#text");
+      const formatEl = document.querySelector("#format");
+
+      let audioContext;
+      let sampleRate = 24000;
+      let nextStartTime = 0;
+      let pendingByte;
+      let providers = [];
+      let defaultProvider = "";
+      let defaultModel = "";
+
+      function setStatus(message) {
+        status.textContent = message;
+      }
+
+      function apiOrigin() {
+        try {
+          return new URL(urlEl.value).origin;
+        } catch {
+          return location.origin;
+        }
+      }
+
+      function escapeHtml(value) {
+        return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+      }
+
+      function effectiveProvider() {
+        return providers.find((p) => p.name === providerEl.value)
+          ?? providers.find((p) => p.name === defaultProvider);
+      }
+
+      function selectOptionValue(select, value) {
+        if (!value) return;
+        if (![...select.options].some((option) => option.value === value)) {
+          select.insertAdjacentHTML(
+            "beforeend",
+            `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`,
+          );
+        }
+        select.value = value;
+      }
+
+      function updateModels({ selectDefault = false } = {}) {
+        const provider = effectiveProvider();
+        const models = [...(provider?.models ?? [])];
+        const previous = modelEl.value;
+        modelEl.innerHTML = models.length
+          ? models
+              .map(
+                (model) =>
+                  `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`,
+              )
+              .join("")
+          : '<option value="">Provider default</option>';
+        if (models.includes(previous)) {
+          modelEl.value = previous;
+        } else if (selectDefault || !modelEl.value) {
+          modelEl.value = models.includes(defaultModel)
+            ? defaultModel
+            : (models[0] ?? "");
+        }
+      }
+
+      function updateVoices({ selectDefault = false } = {}) {
+        const provider = effectiveProvider();
+        const names = [];
+        if (provider?.default_voice) names.push(provider.default_voice);
+        for (const voice of provider?.voices ?? []) {
+          if (!names.includes(voice)) names.push(voice);
+        }
+        const previous = voiceEl.value;
+        voiceEl.innerHTML = names.length
+          ? names
+              .map(
+                (name) =>
+                  `<option value="${escapeHtml(name)}">${escapeHtml(name)}${
+                    name === provider?.default_voice ? " (default)" : ""
+                  }</option>`,
+              )
+              .join("")
+          : '<option value="">Provider default</option>';
+        if (names.includes(previous)) {
+          voiceEl.value = previous;
+        } else if (selectDefault || !voiceEl.value) {
+          voiceEl.value = provider?.default_voice ?? names[0] ?? "";
+        }
+      }
+
+      async function loadProviders({ selectDefault = false } = {}) {
+        refresh.disabled = true;
+        try {
+          const response = await fetch(`${apiOrigin()}/v1/audio/providers`);
+          if (!response.ok) throw new Error(await response.text());
+          const data = await response.json();
+          providers = data.providers ?? [];
+          defaultProvider = data.default_provider ?? "";
+          defaultModel = data.default_model ?? "";
+
+          const previous = providerEl.value;
+          providerEl.innerHTML = [
+            `<option value="">Engine default${
+              defaultProvider ? ` (${escapeHtml(defaultProvider)})` : ""
+            }</option>`,
+            ...providers.map(
+              (p) => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`,
+            ),
+          ].join("");
+          if ([...providerEl.options].some((o) => o.value === previous)) {
+            providerEl.value = previous;
+          }
+          updateModels({ selectDefault });
+          updateVoices({ selectDefault });
+        } catch (error) {
+          setStatus(`Could not load providers: ${error.message}`);
+        } finally {
+          refresh.disabled = false;
+        }
+      }
+
+      function readOptions() {
+        const raw = optionsEl.value.trim();
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+          throw new Error("Options must be a JSON object");
+        }
+        return parsed;
+      }
+
+      function playPcm16(bytes) {
+        let data = bytes;
+
+        // HTTP chunk boundaries are arbitrary. Keep an odd trailing byte until
+        // the next chunk so every PCM16 sample has exactly two bytes.
+        if (pendingByte !== undefined) {
+          data = new Uint8Array(bytes.length + 1);
+          data[0] = pendingByte;
+          data.set(bytes, 1);
+          pendingByte = undefined;
+        }
+        if (data.length % 2) {
+          pendingByte = data[data.length - 1];
+          data = data.subarray(0, data.length - 1);
+        }
+        if (!data.length) return;
+
+        const audio = audioContext.createBuffer(1, data.length / 2, sampleRate);
+        const samples = audio.getChannelData(0);
+        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+
+        for (let index = 0; index < samples.length; index++) {
+          samples[index] = view.getInt16(index * 2, true) / 32768;
+        }
+
+        const source = audioContext.createBufferSource();
+        source.buffer = audio;
+        source.connect(audioContext.destination);
+
+        const startTime = Math.max(nextStartTime, audioContext.currentTime + 0.05);
+        source.start(startTime);
+        nextStartTime = startTime + audio.duration;
+      }
+
+      providerEl.addEventListener("change", () => {
+        updateModels({ selectDefault: true });
+        updateVoices({ selectDefault: true });
+      });
+      refresh.addEventListener("click", () => loadProviders());
+
+      button.addEventListener("click", async () => {
+        audioContext ??= new AudioContext();
+        await audioContext.resume();
+        button.disabled = true;
+        pendingByte = undefined;
+        nextStartTime = audioContext.currentTime + 0.2;
+        const responseFormat = formatEl.value;
+        const opusChunks = [];
+        let options;
+        try {
+          options = readOptions();
+        } catch (error) {
+          button.disabled = false;
+          setStatus(`Invalid options: ${error.message}`);
+          return;
+        }
+
+        const body = {
+          input: textEl.value,
+          response_format: responseFormat,
+        };
+        if (providerEl.value) body.provider = providerEl.value;
+        if (modelEl.value.trim()) body.model = modelEl.value.trim();
+        if (voiceEl.value.trim()) body.voice = voiceEl.value.trim();
+        if (Object.keys(options).length) body.options = options;
+
+        setStatus("Requesting and streaming audio…");
+
+        try {
+          const response = await fetch(urlEl.value, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+
+          if (!response.ok || !response.body) {
+            throw new Error(await response.text());
+          }
+
+          const headerRate = Number(response.headers.get("X-Sample-Rate"));
+          if (Number.isFinite(headerRate) && headerRate > 0) sampleRate = headerRate;
+
+          const reader = response.body.getReader();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (responseFormat === "pcm16") {
+              playPcm16(value);
+            } else {
+              opusChunks.push(value);
+            }
+          }
+
+          if (responseFormat === "pcm16") {
+            setStatus(`Finished at ${sampleRate} Hz.`);
+          } else {
+            const player = document.querySelector("#opus-player");
+            player.src = URL.createObjectURL(
+              new Blob(opusChunks, { type: "audio/ogg; codecs=opus" }),
+            );
+            player.play().catch(() => {});
+            setStatus("Finished. Opus is ready in the player below.");
+          }
+        } catch (error) {
+          setStatus(`Request failed: ${error.message}`);
+        } finally {
+          button.disabled = false;
+        }
+      });
+
+      async function init() {
+        const params = new URLSearchParams(location.search);
+        if (params.has("url")) urlEl.value = params.get("url");
+        await loadProviders({ selectDefault: true });
+        if (params.has("provider")) {
+          providerEl.value = params.get("provider");
+          updateModels({ selectDefault: true });
+          updateVoices({ selectDefault: true });
+        }
+        if (params.has("model")) selectOptionValue(modelEl, params.get("model"));
+        if (params.has("voice")) selectOptionValue(voiceEl, params.get("voice"));
+        if (params.has("text")) textEl.value = params.get("text");
+      }
+
+      init();
+    </script>
+  </body>
+</html>

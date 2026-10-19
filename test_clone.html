@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TTS voice cloning test</title>
+    <style>
+      body { font: 16px system-ui, sans-serif; margin: 2rem auto; max-width: 52rem; }
+      label, textarea, input, select, button { display: block; width: 100%; box-sizing: border-box; }
+      label { margin-top: 1rem; font-weight: 600; }
+      input, textarea, select, button { margin-top: .35rem; padding: .6rem; }
+      textarea { min-height: 5rem; resize: vertical; }
+      button { cursor: pointer; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1rem; }
+      .check { display: flex; align-items: center; gap: .5rem; margin-top: 1rem; }
+      .check input { width: auto; margin: 0; }
+      #status { background: #f3f4f6; padding: .75rem; white-space: pre-wrap; }
+      nav { margin-bottom: 1rem; }
+      nav a { margin-right: .75rem; }
+      small { font-weight: 400; color: #4b5563; }
+      ul { padding-left: 1.25rem; }
+      li { margin: .35rem 0; }
+      .links a { margin-right: .75rem; }
+    </style>
+  </head>
+  <body>
+    <nav>
+      <a href="test_http.html">HTTP</a>
+      <a href="test_websocket.html">WebSocket</a>
+      <a href="test_clone.html">Voice cloning</a>
+    </nav>
+    <h1>TTS voice cloning test</h1>
+
+    <label>
+      Server base URL
+      <input id="base" value="http://127.0.0.1:8082">
+    </label>
+
+    <div class="row">
+      <label>
+        Provider
+        <select id="provider"></select>
+      </label>
+      <label>
+        New voice name
+        <input id="name" placeholder="my-voice" pattern="[A-Za-z0-9][A-Za-z0-9._-]*">
+      </label>
+    </div>
+
+    <label>
+      Reference audio <small>(wav, mp3, flac, ogg, m4a, aac, opus, webm — first 30 s used)</small>
+      <input id="file" type="file" accept="audio/*,.wav,.mp3,.flac,.ogg,.oga,.opus,.m4a,.aac,.webm">
+    </label>
+
+    <label>
+      Reference transcript <small>(optional; FishAudio uses it for conditioning)</small>
+      <textarea id="reference-text" spellcheck="true" placeholder="Exact words spoken in the reference clip"></textarea>
+    </label>
+
+    <div class="check">
+      <input id="overwrite" type="checkbox">
+      <label for="overwrite" style="margin: 0">Overwrite an existing voice with this name</label>
+    </div>
+
+    <button id="clone">Clone voice</button>
+    <audio id="preview" controls></audio>
+    <p id="status">Ready.</p>
+
+    <h2>Voices</h2>
+    <p><button id="refresh" type="button">Refresh voices</button></p>
+    <ul id="voices"></ul>
+
+    <script>
+      const baseEl = document.querySelector("#base");
+      const providerEl = document.querySelector("#provider");
+      const nameEl = document.querySelector("#name");
+      const fileEl = document.querySelector("#file");
+      const referenceEl = document.querySelector("#reference-text");
+      const overwriteEl = document.querySelector("#overwrite");
+      const cloneButton = document.querySelector("#clone");
+      const refreshButton = document.querySelector("#refresh");
+      const status = document.querySelector("#status");
+      const preview = document.querySelector("#preview");
+      const voicesEl = document.querySelector("#voices");
+
+      let providers = [];
+      let defaultProvider = "";
+
+      function setStatus(message) {
+        status.textContent = message;
+      }
+
+      function apiBase() {
+        return baseEl.value.trim().replace(/\/+$/, "");
+      }
+
+      function escapeHtml(value) {
+        return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+      }
+
+      function effectiveProviderName() {
+        return providerEl.value || defaultProvider;
+      }
+
+      function effectiveProvider() {
+        return providers.find((p) => p.name === effectiveProviderName());
+      }
+
+      function testLink(page, provider, voice) {
+        const params = new URLSearchParams();
+        if (provider) params.set("provider", provider);
+        params.set("voice", voice);
+        return `${page}?${params}`;
+      }
+
+      function renderVoices(highlight) {
+        const provider = effectiveProvider();
+        if (!provider) {
+          voicesEl.innerHTML = "<li>No provider selected.</li>";
+          return;
+        }
+        const names = provider.voices ?? [];
+        if (!names.length) {
+          voicesEl.innerHTML = "<li>No exported voices yet.</li>";
+          return;
+        }
+        voicesEl.innerHTML = names
+          .map((voice) => {
+            const links = [
+              `<a href="${testLink("test_http.html", provider.name, voice)}">Speak (HTTP)</a>`,
+              `<a href="${testLink("test_websocket.html", provider.name, voice)}">Speak (WebSocket)</a>`,
+            ].join("");
+            const favorite = voice === provider.default_voice ? " (default)" : "";
+            const fresh = voice === highlight ? " — just cloned" : "";
+            return `<li><strong>${escapeHtml(voice)}</strong>${favorite}${fresh} <span class="links">${links}</span></li>`;
+          })
+          .join("");
+      }
+
+      async function loadProviders({ selectDefault = false } = {}) {
+        refreshButton.disabled = true;
+        try {
+          const response = await fetch(`${apiBase()}/v1/audio/providers`);
+          if (!response.ok) throw new Error(await response.text());
+          const data = await response.json();
+          providers = data.providers ?? [];
+          defaultProvider = data.default_provider ?? "";
+
+          const previous = providerEl.value;
+          providerEl.innerHTML = providers
+            .map(
+              (p) =>
+                `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}${
+                  p.name === defaultProvider ? " (engine default)" : ""
+                }</option>`,
+            )
+            .join("");
+          if ([...providerEl.options].some((o) => o.value === previous)) {
+            providerEl.value = previous;
+          } else if (selectDefault || !providerEl.value) {
+            providerEl.value = defaultProvider;
+          }
+          renderVoices();
+        } catch (error) {
+          setStatus(`Could not load providers: ${error.message}`);
+        } finally {
+          refreshButton.disabled = false;
+        }
+      }
+
+      providerEl.addEventListener("change", () => renderVoices());
+      refreshButton.addEventListener("click", () => loadProviders());
+
+      fileEl.addEventListener("change", () => {
+        const file = fileEl.files[0];
+        preview.src = file ? URL.createObjectURL(file) : "";
+        if (file) setStatus(`Selected ${file.name} (${(file.size / 1024).toFixed(0)} KiB).`);
+      });
+
+      cloneButton.addEventListener("click", async () => {
+        const file = fileEl.files[0];
+        const name = nameEl.value.trim();
+        if (!file) {
+          setStatus("Choose a reference audio file first.");
+          return;
+        }
+        if (!name) {
+          setStatus("Enter a name for the new voice.");
+          return;
+        }
+
+        const form = new FormData();
+        form.append("file", file);
+        form.append("name", name);
+        form.append("overwrite", overwriteEl.checked ? "true" : "false");
+        if (providerEl.value) form.append("provider", providerEl.value);
+        if (referenceEl.value.trim()) {
+          form.append("reference_text", referenceEl.value.trim());
+        }
+
+        cloneButton.disabled = true;
+        setStatus("Encoding the reference clip…");
+        try {
+          const response = await fetch(`${apiBase()}/v1/audio/voices/clone`, {
+            method: "POST",
+            body: form,
+          });
+          const text = await response.text();
+          let payload;
+          try {
+            payload = JSON.parse(text);
+          } catch {
+            payload = text;
+          }
+          if (!response.ok) {
+            const detail = payload?.detail ?? payload;
+            throw new Error(
+              typeof detail === "string" ? detail : JSON.stringify(detail),
+            );
+          }
+
+          setStatus(
+            `Cloned ${payload.voice} for ${payload.provider} → ${payload.file}\n` +
+              `Test it: ${testLink("test_http.html", payload.provider, payload.voice)}`,
+          );
+          await loadProviders();
+          providerEl.value = payload.provider;
+          renderVoices(payload.voice);
+        } catch (error) {
+          setStatus(`Clone failed: ${error.message}`);
+        } finally {
+          cloneButton.disabled = false;
+        }
+      });
+
+      async function init() {
+        const params = new URLSearchParams(location.search);
+        if (params.has("base")) baseEl.value = params.get("base");
+        await loadProviders({ selectDefault: true });
+        if (params.has("provider")) {
+          providerEl.value = params.get("provider");
+          renderVoices(params.get("voice") ?? undefined);
+        }
+      }
+
+      init();
+    </script>
+  </body>
+</html>

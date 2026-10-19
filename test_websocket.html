@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TTS WebSocket test</title>
+    <style>
+      body { font: 16px system-ui, sans-serif; margin: 2rem auto; max-width: 52rem; }
+      label, textarea, input, select, button { display: block; width: 100%; box-sizing: border-box; }
+      label { margin-top: 1rem; font-weight: 600; }
+      input, textarea, select, button { margin-top: .35rem; padding: .6rem; }
+      textarea { min-height: 6rem; resize: vertical; }
+      button { cursor: pointer; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1rem; }
+      .inline { display: flex; gap: .5rem; margin-top: .35rem; }
+      #status { background: #f3f4f6; padding: .75rem; white-space: pre-wrap; }
+      nav { margin-bottom: 1rem; }
+      nav a { margin-right: .75rem; }
+      small { font-weight: 400; color: #4b5563; }
+    </style>
+  </head>
+  <body>
+    <nav>
+      <a href="test_http.html">HTTP</a>
+      <a href="test_websocket.html">WebSocket</a>
+      <a href="test_clone.html">Voice cloning</a>
+    </nav>
+    <h1>TTS WebSocket test</h1>
+
+    <label>
+      WebSocket URL
+      <input id="url" value="ws://127.0.0.1:8082/v1/audio/speech/stream">
+    </label>
+
+    <div class="row">
+      <label>
+        Provider
+        <select id="provider"></select>
+      </label>
+      <label>
+        Model
+        <select id="model"></select>
+      </label>
+    </div>
+
+    <label>
+      Voice
+      <select id="voice"></select>
+    </label>
+
+    <label>
+      Options <small>(provider-specific JSON, optional)</small>
+      <textarea id="options" spellcheck="false" placeholder='{"quantize": "int8", "temperature": 0.8}'></textarea>
+    </label>
+
+    <label>
+      Text
+      <textarea id="text">Hello from the browser WebSocket client.</textarea>
+    </label>
+
+    <label>
+      Response format
+      <select id="format">
+        <option value="pcm16">PCM16 (streaming playback)</option>
+        <option value="opus_24k">Opus 24 kbps</option>
+        <option value="opus_32k">Opus 32 kbps</option>
+      </select>
+    </label>
+
+    <div class="inline">
+      <button id="speak">Connect and speak</button>
+      <button id="refresh" type="button">Refresh providers</button>
+    </div>
+
+    <audio id="opus-player" controls></audio>
+    <p id="status">Ready.</p>
+
+    <script>
+      const button = document.querySelector("#speak");
+      const refresh = document.querySelector("#refresh");
+      const status = document.querySelector("#status");
+      const urlEl = document.querySelector("#url");
+      const providerEl = document.querySelector("#provider");
+      const modelEl = document.querySelector("#model");
+      const voiceEl = document.querySelector("#voice");
+      const optionsEl = document.querySelector("#options");
+      const textEl = document.querySelector("#text");
+      const formatEl = document.querySelector("#format");
+
+      let socket;
+      let audioContext;
+      let sampleRate = 24000;
+      let nextStartTime = 0;
+      let responseFormat = "pcm16";
+      let opusChunks = [];
+      let providers = [];
+      let defaultProvider = "";
+      let defaultModel = "";
+
+      function setStatus(message) {
+        status.textContent = message;
+      }
+
+      function apiOrigin() {
+        try {
+          const url = new URL(urlEl.value);
+          return `${url.protocol === "wss:" ? "https:" : "http:"}//${url.host}`;
+        } catch {
+          return location.origin;
+        }
+      }
+
+      function escapeHtml(value) {
+        return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+      }
+
+      function effectiveProvider() {
+        return providers.find((p) => p.name === providerEl.value)
+          ?? providers.find((p) => p.name === defaultProvider);
+      }
+
+      function selectOptionValue(select, value) {
+        if (!value) return;
+        if (![...select.options].some((option) => option.value === value)) {
+          select.insertAdjacentHTML(
+            "beforeend",
+            `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`,
+          );
+        }
+        select.value = value;
+      }
+
+      function updateModels({ selectDefault = false } = {}) {
+        const provider = effectiveProvider();
+        const models = [...(provider?.models ?? [])];
+        const previous = modelEl.value;
+        modelEl.innerHTML = models.length
+          ? models
+              .map(
+                (model) =>
+                  `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`,
+              )
+              .join("")
+          : '<option value="">Provider default</option>';
+        if (models.includes(previous)) {
+          modelEl.value = previous;
+        } else if (selectDefault || !modelEl.value) {
+          modelEl.value = models.includes(defaultModel)
+            ? defaultModel
+            : (models[0] ?? "");
+        }
+      }
+
+      function updateVoices({ selectDefault = false } = {}) {
+        const provider = effectiveProvider();
+        const names = [];
+        if (provider?.default_voice) names.push(provider.default_voice);
+        for (const voice of provider?.voices ?? []) {
+          if (!names.includes(voice)) names.push(voice);
+        }
+        const previous = voiceEl.value;
+        voiceEl.innerHTML = names.length
+          ? names
+              .map(
+                (name) =>
+                  `<option value="${escapeHtml(name)}">${escapeHtml(name)}${
+                    name === provider?.default_voice ? " (default)" : ""
+                  }</option>`,
+              )
+              .join("")
+          : '<option value="">Provider default</option>';
+        if (names.includes(previous)) {
+          voiceEl.value = previous;
+        } else if (selectDefault || !voiceEl.value) {
+          voiceEl.value = provider?.default_voice ?? names[0] ?? "";
+        }
+      }
+
+      async function loadProviders({ selectDefault = false } = {}) {
+        refresh.disabled = true;
+        try {
+          const response = await fetch(`${apiOrigin()}/v1/audio/providers`);
+          if (!response.ok) throw new Error(await response.text());
+          const data = await response.json();
+          providers = data.providers ?? [];
+          defaultProvider = data.default_provider ?? "";
+          defaultModel = data.default_model ?? "";
+
+          const previous = providerEl.value;
+          providerEl.innerHTML = [
+            `<option value="">Engine default${
+              defaultProvider ? ` (${escapeHtml(defaultProvider)})` : ""
+            }</option>`,
+            ...providers.map(
+              (p) => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`,
+            ),
+          ].join("");
+          if ([...providerEl.options].some((o) => o.value === previous)) {
+            providerEl.value = previous;
+          }
+          updateModels({ selectDefault });
+          updateVoices({ selectDefault });
+        } catch (error) {
+          setStatus(`Could not load providers: ${error.message}`);
+        } finally {
+          refresh.disabled = false;
+        }
+      }
+
+      function readOptions() {
+        const raw = optionsEl.value.trim();
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+          throw new Error("Options must be a JSON object");
+        }
+        return parsed;
+      }
+
+      function playPcm16(buffer) {
+        const pcm = new Int16Array(buffer);
+        const audio = audioContext.createBuffer(1, pcm.length, sampleRate);
+        const samples = audio.getChannelData(0);
+
+        for (let index = 0; index < pcm.length; index++) {
+          samples[index] = pcm[index] / 32768;
+        }
+
+        const source = audioContext.createBufferSource();
+        source.buffer = audio;
+        source.connect(audioContext.destination);
+
+        const startTime = Math.max(nextStartTime, audioContext.currentTime + 0.05);
+        source.start(startTime);
+        nextStartTime = startTime + audio.duration;
+      }
+
+      function sendSpeech(connection) {
+        responseFormat = formatEl.value;
+        opusChunks = [];
+
+        let options;
+        try {
+          options = readOptions();
+        } catch (error) {
+          setStatus(`Invalid options: ${error.message}`);
+          return;
+        }
+
+        const request = {
+          input: textEl.value,
+          response_format: responseFormat,
+        };
+        if (providerEl.value) request.provider = providerEl.value;
+        if (modelEl.value.trim()) request.model = modelEl.value.trim();
+        if (voiceEl.value.trim()) request.voice = voiceEl.value.trim();
+        if (Object.keys(options).length) request.options = options;
+
+        setStatus("Connected. Generating speech…");
+        connection.send(JSON.stringify(request));
+      }
+
+      providerEl.addEventListener("change", () => {
+        updateModels({ selectDefault: true });
+        updateVoices({ selectDefault: true });
+      });
+      refresh.addEventListener("click", () => loadProviders());
+
+      button.addEventListener("click", async () => {
+        // Creating/resuming AudioContext inside a click handler satisfies browser
+        // autoplay rules.
+        audioContext ??= new AudioContext();
+        await audioContext.resume();
+
+        // A finished stream leaves the WebSocket open. Reuse it for the next
+        // request so the server's receive loop gets another JSON message.
+        if (socket?.readyState === WebSocket.OPEN) {
+          sendSpeech(socket);
+          return;
+        }
+
+        if (socket?.readyState === WebSocket.CONNECTING) {
+          setStatus("Connecting…");
+          return;
+        }
+
+        const connection = new WebSocket(urlEl.value);
+        socket = connection;
+        connection.binaryType = "arraybuffer";
+
+        connection.onopen = () => {
+          sendSpeech(connection);
+        };
+
+        connection.onmessage = (event) => {
+          if (typeof event.data === "string") {
+            const message = JSON.parse(event.data);
+
+            if (message.type === "speech.start") {
+              sampleRate = message.sample_rate;
+              // Keep 200 ms queued before the first word reaches the device.
+              nextStartTime = audioContext.currentTime + 0.2;
+              setStatus(
+                `Streaming ${message.format} at ${sampleRate} Hz…`,
+              );
+            } else if (message.type === "speech.done") {
+              if (responseFormat === "pcm16") {
+                setStatus("Finished.");
+              } else {
+                const player = document.querySelector("#opus-player");
+                player.src = URL.createObjectURL(
+                  new Blob(opusChunks, { type: "audio/ogg; codecs=opus" }),
+                );
+                player.play().catch(() => {});
+                setStatus("Finished. Opus is ready in the player below.");
+              }
+            } else if (message.type === "error") {
+              setStatus(`Server error: ${JSON.stringify(message.message)}`);
+            }
+            return;
+          }
+
+          if (responseFormat === "pcm16") {
+            playPcm16(event.data);
+          } else {
+            opusChunks.push(event.data);
+          }
+        };
+
+        connection.onerror = () => setStatus("WebSocket connection error.");
+        connection.onclose = () => {
+          if (socket === connection) socket = undefined;
+        };
+      });
+
+      async function init() {
+        const params = new URLSearchParams(location.search);
+        if (params.has("url")) urlEl.value = params.get("url");
+        await loadProviders({ selectDefault: true });
+        if (params.has("provider")) {
+          providerEl.value = params.get("provider");
+          updateModels({ selectDefault: true });
+          updateVoices({ selectDefault: true });
+        }
+        if (params.has("model")) selectOptionValue(modelEl, params.get("model"));
+        if (params.has("voice")) selectOptionValue(voiceEl, params.get("voice"));
+        if (params.has("text")) textEl.value = params.get("text");
+      }
+
+      init();
+    </script>
+  </body>
+</html>
