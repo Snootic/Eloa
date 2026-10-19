@@ -10,4 +10,8 @@ wheels/
 .venv
 voices/
 *.wav
-*.ogg
+
+
+benchmarks/*
+# Local model weights
+models/

@@ -94,6 +94,88 @@ The clone endpoint accepts `file` (32 MiB max), `name`, optional `provider`,
 `overwrite`. It returns the exported file name and the provider's refreshed
 voice list.
 
+## Docker
+
+Four images cover the execution backends:
+
+| Profile | Image contents | Host port |
+|---|---|---:|
+| `cpu` | Pocket TTS + Kokoro, torch CPU | 8082 |
+| `openvino` | Chatterbox-Turbo ONNX, OpenVINO, Intel GPU runtime | 8083 |
+| `vulkan` | Qwen3-TTS via qwentts.cpp built with Vulkan | 8084 |
+| `cuda` | Qwen3-TTS via qwentts.cpp built with CUDA | 8085 |
+
+Build and start one profile:
+
+```sh
+docker compose --profile cpu up --build
+docker compose --profile openvino up --build
+docker compose --profile vulkan up --build
+docker compose --profile cuda up --build
+```
+
+All images use the same configurable entrypoint:
+
+| Variable | Default |
+|---|---|
+| `TTS_PROVIDER` | `pocket-tts` |
+| `TTS_MODEL` | `portuguese` |
+| `TTS_VOICE` | `camilly-portuguese` |
+| `TTS_VOICE_SOURCE` | unset |
+| `TTS_OPTIONS` | `{}` (JSON object) |
+| `TTS_VOICES_DIR` | `voices` |
+| `TTS_MAX_CACHED_MODELS` | `2` |
+| `TTS_HOST` / `TTS_PORT` | `0.0.0.0` / `8082` |
+
+The CPU image installs the `kokoro` extra by default. Build it slimmer with
+`--build-arg UV_EXTRAS=` if Kokoro is not needed.
+
+### GPU prerequisites
+
+- **OpenVINO:** `/dev/dri`. The image is based on Intel's official OpenVINO
+  runtime image, which ships the current Level Zero driver; the host kernel
+  driver must be present.
+- **Vulkan:** `/dev/dri`; Mesa's ANV driver is in the image.
+- **CUDA:** NVIDIA driver + NVIDIA Container Toolkit; Compose requests all
+  GPUs. The CUDA image is built from `nvidia/cuda:12.8.1`.
+
+GPU containers run as root with `security_opt: label=disable` so they can open
+`/dev/dri`; CPU remains the default for the `cpu` profile.
+
+SELinux hosts need the `:z` relabel that the Compose file already applies to
+bind mounts. The GPU profiles additionally disable SELinux labeling for device
+access.
+
+### Model and voice mounts
+
+Model weights are **not** baked into the images. The Compose file mounts:
+
+- `./voices` → `/app/voices`
+- `./benchmarks` → `/app/benchmarks` (Helena ICL reference)
+- `./models` → `/models` (Qwen GGUF)
+- the `tts-hf-cache` volume → `/cache/huggingface`
+
+For the Qwen profiles, download the 0.6B Q8 files:
+
+```sh
+mkdir -p models
+uvx --from huggingface_hub hf download Serveurperso/Qwen3-TTS-GGUF \
+  qwen-talker-0.6b-base-Q8_0.gguf qwen-tokenizer-12hz-Q8_0.gguf --local-dir models
+```
+
+The Vulkan/CUDA defaults use the Helena voice in
+`benchmarks/helena/helena-24k.wav` with its `.lab` transcript. If that folder
+is absent, set `TTS_VOICE_SOURCE` and `TTS_VOICE` to a reference clip you have
+(and provide its transcript), or send provider options per HTTP request.
+
+The OpenVINO profile defaults to `chatterbox-turbo-ov` with
+`voices/ad-women.wav`; set `TTS_PROVIDER=fish-s1-mini` etc. to use another
+installed provider. Fish is gated and needs `HF_TOKEN`.
+
+The Qwen images build `qwentts.cpp` at commit `5916bf7`. The Vulkan profile
+uses `Vulkan0`; CUDA uses `CUDA0`. Q4_K_M is not recommended for the 0.6B
+talker; use Q8_0 or the Q6_K file.
+
 ## Kokoro (CPU)
 
 `provider: "kokoro"`, `model: "kokoro-82m"`. Kokoro is 82M parameters,

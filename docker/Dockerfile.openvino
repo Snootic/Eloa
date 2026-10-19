@@ -1,0 +1,63 @@
+# syntax=docker/dockerfile:1
+ARG OPENVINO_BASE=openvino/ubuntu24_runtime:2026.4.1
+FROM ghcr.io/astral-sh/uv:0.11.16 AS uv
+
+FROM ${OPENVINO_BASE} AS app
+USER 0
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/app-venv \
+    HF_HOME=/cache/huggingface
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates python3.12-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=uv /uv /uvx /bin/
+
+WORKDIR /app
+COPY pyproject.toml README.md ./
+RUN uv venv /app-venv --python python3.12
+RUN uv pip install --python /app-venv/bin/python --torch-backend=cpu \
+        -r pyproject.toml --extra openvino --extra chatterbox-onnx
+
+COPY tts_core ./tts_core
+COPY providers ./providers
+COPY server ./server
+COPY main.py torching.py ./
+
+FROM ${OPENVINO_BASE}
+USER 0
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    PATH=/app-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    HF_HOME=/cache/huggingface \
+    TTS_PROVIDER=chatterbox-turbo-ov \
+    TTS_MODEL=chatterbox-turbo \
+    TTS_VOICE=ad-women \
+    TTS_VOICE_SOURCE=/app/voices/ad-women.wav \
+    TTS_OPTIONS='{"device":"GPU"}' \
+    TTS_HOST=0.0.0.0 \
+    TTS_PORT=8082
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates libgomp1 libsndfile1 ffmpeg libportaudio2 espeak-ng \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+USER 0
+
+COPY --from=app /app-venv /app-venv
+COPY --from=app /app /app
+
+EXPOSE 8082
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/health')" || exit 1
+CMD ["python", "main.py"]

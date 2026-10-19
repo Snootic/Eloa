@@ -1,0 +1,88 @@
+# syntax=docker/dockerfile:1
+FROM ghcr.io/astral-sh/uv:0.11.16 AS uv
+
+FROM nvidia/cuda:12.8.1-devel-ubuntu24.04 AS qwen
+
+ARG QWENTTS_REPO=https://github.com/ServeurpersoCom/qwentts.cpp.git
+ARG QWENTTS_REF=5916bf7
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LIBRARY_PATH=/usr/local/cuda/lib64/stubs:/usr/local/cuda/lib64
+RUN ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/libcuda.so || true
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --recursive "${QWENTTS_REPO}" /src/qwentts \
+    && cd /src/qwentts \
+    && git checkout "${QWENTTS_REF}" \
+    && git submodule update --init --recursive
+
+RUN cmake -S /src/qwentts -B /src/qwentts/build \
+        -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_EXE_LINKER_FLAGS="-L/usr/local/cuda/lib64/stubs -lcuda" \
+    && cmake --build /src/qwentts/build -j"$(nproc)" \
+        --target qwen-tts qwen-codec
+
+RUN mkdir -p /opt/qwentts/lib \
+    && cp /src/qwentts/build/qwen-tts /src/qwentts/build/qwen-codec /opt/qwentts/ \
+    && find /src/qwentts/build -name '*.so*' -exec cp -a {} /opt/qwentts/lib/ \;
+
+FROM ubuntu:24.04 AS app
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    HF_HOME=/cache/huggingface
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates python3.12 python3.12-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=uv /uv /uvx /bin/
+WORKDIR /app
+COPY pyproject.toml README.md ./
+RUN uv venv /opt/venv --python python3.12
+RUN uv pip install --python /opt/venv/bin/python --torch-backend=cpu \
+        -r pyproject.toml
+
+COPY tts_core ./tts_core
+COPY providers ./providers
+COPY server ./server
+COPY main.py torching.py ./
+
+FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    PATH=/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    LD_LIBRARY_PATH=/opt/qwentts/lib \
+    HF_HOME=/cache/huggingface \
+    TTS_PROVIDER=qwen3-tts \
+    TTS_MODEL=qwen3-tts-0.6b \
+    TTS_VOICE=helena \
+    TTS_VOICE_SOURCE=/app/benchmarks/helena/helena-24k.wav \
+    TTS_OPTIONS='{"talker":"/models/qwen-talker-0.6b-base-Q8_0.gguf","codec":"/models/qwen-tokenizer-12hz-Q8_0.gguf","binary":"/opt/qwentts/qwen-tts","codec_binary":"/opt/qwentts/qwen-codec","device":"CUDA0","codec_chunk_dur":4}' \
+    TTS_HOST=0.0.0.0 \
+    TTS_PORT=8082
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates python3.12 libgomp1 libsndfile1 ffmpeg \
+        libportaudio2 espeak-ng \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=app /opt/venv /opt/venv
+COPY --from=app /app /app
+COPY --from=qwen /opt/qwentts /opt/qwentts
+
+EXPOSE 8082
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/health')" || exit 1
+CMD ["python", "main.py"]
