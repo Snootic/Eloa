@@ -17,6 +17,7 @@ tts_core/              provider-agnostic core
 providers/             officially supported providers
   pocket_tts.py        Pocket TTS adapter
   kokoro.py            Kokoro-82M, CPU-first with built-in voices
+  neutts.py            NeuTTS Air/Nano (optional neutts package)
   qwen3_tts.py         Qwen3-TTS via qwentts.cpp (Vulkan/CUDA/CPU)
   fish_s1_mini/        FishAudio S1-mini adapter + vendored inference code
   chatterbox.py        Chatterbox / Chatterbox-Turbo (optional package)
@@ -118,6 +119,38 @@ Chinese. The provider creates the matching G2P pipeline per voice, so no
 
 Measured here: **3.2–3.5× realtime on CPU with 4 threads** (3.3 s audio in
 ~1 s), including Portuguese. `GET /v1/audio/providers` lists all 54 voices.
+
+## NeuTTS Air / Nano
+
+`provider: "neutts"`, models `neutts-air` and `neutts-nano`. NeuTTS is a small
+LLM + NeuCodec stack with instant voice cloning. `neutts` pins its own
+Transformers/torch versions, so install it in a separate environment rather
+than the default server venv:
+
+```sh
+uv venv ~/.venvs/neutts --python 3.12
+uv pip install --python ~/.venvs/neutts/bin/python neutts
+# Nano GGUF backbone:
+uv pip install --python ~/.venvs/neutts/bin/python "neutts[llama]"
+
+PYTHONPATH=. ~/.venvs/neutts/bin/python main.py
+```
+
+The official `neuphonic/neutts-air`, `neuphonic/neutts-nano`, and
+`neuphonic/neucodec` repositories are gated on Hugging Face; accept their
+terms and authenticate before use. Override `backbone_repo`/`codec_repo` to
+use a mirror or local checkpoint.
+
+A reference clip **and its exact transcript** are required: pass
+`reference_text` to the clone endpoint, or place `<clip>.lab`/`<clip>.txt`
+next to the reference. Exporting a voice writes a `.pt` code file and `.txt`.
+
+Air is English, ~552M total parameters, Apache-2.0. Nano is English, ~229M,
+under the NeuTTS Open License 1.0; German/French/Spanish variants are separate
+repos. There is no official Portuguese Nano. Measured on CPU here: Air **0.24–
+0.25× realtime**, Pocket TTS **2.2–2.9×** on the same clips. The official Nano
+could not be benchmarked because its weights/codec are gated; details and the
+Air/Pocket audio are in `benchmarks/neutts/`.
 
 ## Qwen3-TTS (GGML / Vulkan)
 
