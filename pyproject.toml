@@ -21,6 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 openvino = ["openvino>=2026.0"]
+chatterbox-onnx = ["openvino>=2026.0", "transformers>=4.40"]
 
 [project.entry-points."tts_core.providers"]
 fish-s1-mini = "providers.fish_s1_mini:FishS1MiniProvider"

@@ -157,15 +157,29 @@ commercial use requires a separate license from Fish Audio.
 
 ## Optional providers: Chatterbox and F5-TTS
 
-Two more providers are included but not installed by default because their
-packages pin incompatible torch/numpy stacks:
+Three more providers are included but not installed by default: the torch
+packages pin incompatible torch/numpy stacks.
 
-| Provider | Models | Reference audio | License |
-| --- | --- | --- | --- |
-| `chatterbox` | `chatterbox`, `chatterbox-turbo` | audio prompt only | MIT |
-| `f5-tts` | `F5TTS_v1_Base`, `F5TTS_Base`, `E2TTS_Base` | audio + transcript | code MIT, weights CC-BY-NC-4.0 |
+| Provider | Models | Runtime | Reference audio | License |
+| --- | --- | --- | --- | --- |
+| `chatterbox-turbo-ov` | `chatterbox-turbo` | OpenVINO (torch-free) | audio prompt only | MIT |
+| `chatterbox` | `chatterbox`, `chatterbox-turbo` | torch | audio prompt only | MIT |
+| `f5-tts` | `F5TTS_v1_Base`, `F5TTS_Base`, `E2TTS_Base` | torch | audio + transcript | code MIT, weights CC-BY-NC-4.0 |
 
-Install each in its own environment (they pin their own torch):
+The ONNX Turbo provider needs no torch and can live in the default
+environment:
+
+```sh
+uv sync --extra chatterbox-onnx
+```
+
+It downloads the official fp16 ONNX graphs (~1.7 GB) on first use and copies
+them out of the Hugging Face symlink layout so OpenVINO can read the external
+weights. The language model and embeddings run on the OpenVINO GPU; the speech
+encoder and decoder run on CPU because their fp16 graphs are not usable on the
+current Intel GPU driver.
+
+Install the torch providers each in its own environment (they pin torch):
 
 ```sh
 uv venv ~/.venvs/chatterbox --python 3.12
@@ -188,22 +202,26 @@ environment keeps working. F5-TTS requires the reference transcript: put a
 `<voice>.lab` sidecar next to the clip or pass `options.reference_text`.
 Chatterbox uses the clip itself; its transcript is ignored.
 
-Measured on this workstation (CPU, 4 threads, ~2.5 s utterances; Pocket on the
-same CPU):
+Measured on this workstation (~2.5 s utterances; CPU rows use 4 threads):
 
-| Model | Speed |
-| --- | ---: |
-| Pocket TTS | 2.8× realtime |
-| FishAudio S1-mini (Arc B580, OpenVINO) | 0.25× |
-| Chatterbox-Turbo | 0.19× |
-| F5-TTS, 8 steps | 0.10× |
-| Chatterbox (original) | 0.07× |
-| F5-TTS, 16 steps | 0.04× |
+| Model | Device | Speed |
+| --- | --- | ---: |
+| Pocket TTS | CPU | 2.8× realtime |
+| **Chatterbox-Turbo (ONNX)** | **Arc B580, OpenVINO** | **0.79–0.84×** |
+| FishAudio S1-mini | Arc B580, OpenVINO | 0.25× |
+| Chatterbox-Turbo | CPU | 0.19× |
+| F5-TTS, 8 steps | CPU | 0.10× |
+| Chatterbox (original) | CPU | 0.07× |
+| F5-TTS, 16 steps | CPU | 0.04× |
+
+Chatterbox-Turbo on OpenVINO is the best non-Pocket result: ~4× its CPU speed
+and ~3× faster than Fish on the same GPU. Sampling is required; greedy decoding
+degenerates into a loop. The ONNX AR loop runs on GPU, while the one-time voice
+encoder (~3 s) and per-utterance decoder (~0.7–1.0 s) remain on CPU. F5-TTS has
+no ONNX export, so it was not tested on the Intel GPU; it remains a torch
+CPU/CUDA/MPS provider.
 
 These are speed measurements only — quality was not evaluated by listening.
-Chatterbox-Turbo is the closest CPU-competitive option of the three, but
-Pocket TTS remains far faster on CPU. Chatterbox's ONNX Turbo model is a
-potential OpenVINO path; F5-TTS would need a separate OpenVINO conversion.
 
 ## Add a provider
 
