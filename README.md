@@ -116,32 +116,38 @@ transcript of the clip; without it, set `options.reference_text`. If no
 reference exists, the provider's `default` voice synthesizes an unconditioned
 (random-timbre) voice.
 
-Quantization: there is no official quantized S1-mini checkpoint on the Hub,
-so `options.quantize` applies torchao to the AR model at load time:
-`"int8"` = dynamic activation+weight (falls back to `torch.ao`),
-`"int8-weight"` = weight-only, which keeps the bf16 activations and requires
-torchao. Both cut weight memory; neither is faster than bf16 on CPU at batch 1.
-`options.device` defaults to `auto` (CUDA, then Intel XPU, then MPS, then
-CPU) and also accepts an explicit `cuda`, `xpu`, `mps`, or `cpu`.
-`options.dtype` accepts `bfloat16` (default), `float16`, or `float32`;
-`options.checkpoint` can point at a local copy of the model directory or
-another compatible Hub repo. Pre-quantized checkpoints are not accepted — the
-int8 path quantizes the float weights after loading.
+Backend: `options.backend` is `auto` (default), `torch`, or `openvino`.
+`auto` selects OpenVINO when it is installed and an Intel GPU is visible,
+otherwise the PyTorch path. OpenVINO compiles the slow and fast transformer
+steps into GPU graphs with explicit KV caches; sampling stays in Python.
+`options.openvino_device` is `AUTO`, `GPU`, or `CPU`. Install it with
+`uv sync --extra openvino` (or `pip install openvino`). Intel GPUs require
+OpenVINO to initialize before torch, so the provider creates `ov.Core()`
+first — if you embed the server, import `providers` before torch. The codec
+still runs on the torch device. PyTorch XPU support was removed. On an Arc
+B580, a 1.8 s utterance took about 7.3 s wall time (prefill 0.3 s,
+autoregressive decoding 4.3 s, codec 1.8 s).
 
-`options.compile = true` wraps the decode step in `torch.compile`. It targets
-CUDA (where it is recommended); on CPU the first call spends minutes compiling
-and steady-state throughput was slower than eager, so leave it off there.
+Torch path (also used for CUDA/MPS/CPU): `options.device` defaults to `auto`
+(CUDA, then MPS, then CPU) and accepts `cuda`, `mps`, or `cpu`.
+`options.dtype` accepts `bfloat16` (default), `float16`, or `float32`.
+`options.checkpoint` can point at a local copy of the model directory or
+another compatible Hub repo. Pre-quantized checkpoints are not accepted.
+
+Quantization (torch backend, no official quantized checkpoint on the Hub):
+`options.quantize` applies torchao at load time — `"int8"` = dynamic
+activation+weight (falls back to `torch.ao`), `"int8-weight"` = weight-only,
+which keeps bf16 activations and requires torchao. Both cut weight memory;
+neither was faster than bf16 on CPU at batch 1. `options.compile = true`
+wraps the torch decode step in `torch.compile`; it targets CUDA, and on CPU
+the first call spends minutes compiling and ran slower than eager.
 
 CPU inference is substantially slower than realtime (the AR model is 860M
-parameters); prefer a GPU, and use `options.quantize = "int8"` to halve weight
-memory when RAM is tight. On a Fish-only CPU server, set
-`options.threads` to the physical core count (measured ~1.5x faster than the
-4-thread default); if Pocket TTS shares the process, 4 threads remains the
-better compromise. `iterative_prompt` with a small `chunk_length` lowers
-time-to-first-audio without changing throughput. On Intel Arc, install an XPU build of PyTorch
-(`torch==2.9.1+xpu` from `download.pytorch.org/whl/xpu`); `device: "auto"`
-then picks `xpu`, and masked attention automatically uses the math SDPA
-kernel, which is the only one Intel's backend supports for that shape.
+parameters). On a Fish-only CPU server, set `options.threads` to the physical
+core count (measured ~1.5x faster than the 4-thread default); if Pocket TTS
+shares the process, 4 threads remains the better compromise.
+`iterative_prompt` with a small `chunk_length` lowers time-to-first-audio
+without changing throughput.
 
 License: the weights are CC-BY-NC-SA-4.0 and the vendored fish-speech code is
 under the Fish Audio Research License. Research and non-commercial use only;

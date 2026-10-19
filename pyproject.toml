@@ -19,6 +19,9 @@ dependencies = [
     "wyoming>=1.10.0",
 ]
 
+[project.optional-dependencies]
+openvino = ["openvino>=2026.0"]
+
 [project.entry-points."tts_core.providers"]
 fish-s1-mini = "providers.fish_s1_mini:FishS1MiniProvider"
 pocket-tts = "providers.pocket_tts:PocketTTSProvider"

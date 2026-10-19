@@ -10,17 +10,21 @@ import logging
 import platform
 import subprocess
 from collections.abc import Iterator, Mapping
-from contextlib import nullcontext
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import Any, ClassVar
 
+try:
+    # Must run before torch initializes any Intel GPU stack.
+    from . import _openvino as ov_backend
+except ImportError:
+    ov_backend = None
+
 import numpy as np
 import soundfile as sf
 import torch
 from huggingface_hub import snapshot_download
-from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from tts_core.audio import AudioChunk
 from tts_core.provider import SynthesisModel, TTSProvider, VoiceState
@@ -39,7 +43,9 @@ SAMPLE_RATE = 44_100
 
 DEFAULT_OPTIONS: dict[str, Any] = {
     "checkpoint": None,
+    "backend": "auto",
     "device": "auto",
+    "openvino_device": "AUTO",
     "dtype": "bfloat16",
     "quantize": "none",
     "reference_text": "",
@@ -73,13 +79,15 @@ class FishS1MiniModel(SynthesisModel):
         *,
         device: torch.device,
         options: Mapping[str, Any],
+        ov_generator=None,
     ):
         self._model = model
         self._codec = codec
         self._device = device
         self._options = dict(options)
+        self._ov_generator = ov_generator
         self._decode_one_token = decode_one_token_ar
-        if options["compile"]:
+        if ov_generator is None and options["compile"]:
             compile_kwargs: dict[str, Any] = {"fullgraph": True, "dynamic": True}
             if device.type == "cuda":
                 compile_kwargs["mode"] = "reduce-overhead"
@@ -108,7 +116,7 @@ class FishS1MiniModel(SynthesisModel):
         if audio.size == 0:
             raise ValueError(f"Reference audio {path} is empty")
 
-        with torch.inference_mode(), _attention_context(self._device):
+        with torch.inference_mode():
             samples = torch.from_numpy(audio).to(self._device)[None, None, :]
             lengths = torch.tensor(
                 [samples.shape[2]], device=self._device, dtype=torch.long
@@ -125,7 +133,24 @@ class FishS1MiniModel(SynthesisModel):
         options: Mapping[str, Any] | None = None,
     ) -> Iterator[AudioChunk]:
         generation = {**self._options, **(options or {})}
-        with torch.inference_mode(), _attention_context(self._device):
+        if self._ov_generator is not None:
+            segments = self._ov_generator.generate(
+                text=text,
+                prompt_text=voice.text if voice.codes is not None else None,
+                prompt_tokens=voice.codes,
+                max_new_tokens=int(generation["max_new_tokens"]),
+                top_p=float(generation["top_p"]),
+                repetition_penalty=float(generation["repetition_penalty"]),
+                temperature=float(generation["temperature"]),
+                chunk_length=int(generation["chunk_length"]),
+                iterative_prompt=bool(generation["iterative_prompt"]),
+                seed=generation["seed"],
+            )
+            for codes in segments:
+                yield self._decode(codes)
+            return
+
+        with torch.inference_mode():
             segments = generate_segments(
                 model=self._model,
                 text=text,
@@ -147,8 +172,7 @@ class FishS1MiniModel(SynthesisModel):
     def _decode(self, codes: torch.Tensor) -> AudioChunk:
         codes = codes.to(self._device).long()
         lengths = torch.tensor([codes.shape[1]], device=self._device, dtype=torch.long)
-        with _attention_context(self._device):
-            audio, _ = self._codec.decode(codes[None], lengths)
+        audio, _ = self._codec.decode(codes[None], lengths)
         return audio[0, 0].float().cpu().numpy()
 
     def export_voice(self, voice: FishVoice, destination: Path) -> None:
@@ -177,8 +201,14 @@ class FishS1MiniProvider(TTSProvider):
 
         resolved = {**DEFAULT_OPTIONS, **options}
         resolved["checkpoint"] = resolved["checkpoint"] or _checkpoint_uri(model)
+        resolved["backend"] = _resolve_backend(str(resolved["backend"]))
+        resolved["openvino_device"] = str(resolved["openvino_device"]).upper()
         resolved["device"] = _resolve_device(str(resolved["device"]))
         resolved["dtype"] = _resolve_dtype(str(resolved["dtype"]))
+        if resolved["backend"] == "openvino":
+            if resolved["openvino_device"] not in ("AUTO", "GPU", "CPU"):
+                raise ValueError("openvino_device must be AUTO, GPU, or CPU")
+            resolved["dtype"] = "float32"
         if resolved["quantize"] not in ("none", "int8", "int8-weight"):
             raise ValueError("quantize must be 'none', 'int8', or 'int8-weight'")
         if not 0 < float(resolved["top_p"]) <= 1:
@@ -208,7 +238,9 @@ class FishS1MiniProvider(TTSProvider):
             key: options[key]
             for key in (
                 "checkpoint",
+                "backend",
                 "device",
+                "openvino_device",
                 "dtype",
                 "quantize",
                 "compile",
@@ -229,31 +261,46 @@ class FishS1MiniProvider(TTSProvider):
 
         device = torch.device(str(options["device"]))
         dtype = getattr(torch, str(options["dtype"]))
+        backend = str(options["backend"])
         if options["threads"] is not None:
             torch.set_num_threads(int(options["threads"]))
             logger.info("Set torch CPU threads to %s", options["threads"])
-        logger.info("Loading FishAudio S1-mini from %s on %s", path, device)
+        logger.info(
+            "Loading FishAudio S1-mini from %s (backend=%s, device=%s)",
+            path,
+            backend,
+            device,
+        )
 
         model = DualARTransformer.from_pretrained(path)
-        model = model.to(device=device, dtype=dtype)
-
-        if options["quantize"] != "none":
-            weight_only = options["quantize"] == "int8-weight"
-            if not weight_only and dtype is not torch.float32:
-                model = model.to(dtype=torch.float32)
-            model = _apply_int8(model, weight_only=weight_only)
-            logger.info(
-                "Applied torchao int8 %s quantization to the AR model",
-                "weight-only" if weight_only else "dynamic",
+        ov_generator = None
+        if backend == "openvino":
+            if ov_backend is None:
+                raise ValueError("OpenVINO is not installed")
+            model = model.float().eval()
+            ov_generator = ov_backend.OVGenerator(
+                model, str(options["openvino_device"])
             )
+        else:
+            model = model.to(device=device, dtype=dtype)
 
-        with torch.device(device):
-            model.setup_caches(
-                max_batch_size=1,
-                max_seq_len=model.config.max_seq_len,
-                dtype=next(model.parameters()).dtype,
-            )
-        model.eval()
+            if options["quantize"] != "none":
+                weight_only = options["quantize"] == "int8-weight"
+                if not weight_only and dtype is not torch.float32:
+                    model = model.to(dtype=torch.float32)
+                model = _apply_int8(model, weight_only=weight_only)
+                logger.info(
+                    "Applied torchao int8 %s quantization to the AR model",
+                    "weight-only" if weight_only else "dynamic",
+                )
+
+            with torch.device(device):
+                model.setup_caches(
+                    max_batch_size=1,
+                    max_seq_len=model.config.max_seq_len,
+                    dtype=next(model.parameters()).dtype,
+                )
+            model.eval()
 
         codec = _build_codec()
         state = torch.load(
@@ -274,9 +321,15 @@ class FishS1MiniProvider(TTSProvider):
                 f"missing={list(missing)[:5]} unexpected={list(unexpected)[:5]}"
             )
         codec.eval().to(device)
-        logger.info("FishAudio S1-mini ready (quantize=%s)", options["quantize"])
+        logger.info("FishAudio S1-mini ready (backend=%s)", backend)
 
-        return FishS1MiniModel(model, codec, device=device, options=options)
+        return FishS1MiniModel(
+            model,
+            codec,
+            device=device,
+            options=options,
+            ov_generator=ov_generator,
+        )
 
 
 def _checkpoint_uri(model: str) -> str:
@@ -289,35 +342,29 @@ def _checkpoint_uri(model: str) -> str:
     return model if "/" in model else DEFAULT_CHECKPOINT
 
 
-def _xpu_available() -> bool:
-    return hasattr(torch, "xpu") and torch.xpu.is_available()
-
-
-def _attention_context(device: torch.device):
-    """Force the math SDPA kernel on XPU.
-
-    Intel's SDPA kernel fails to create a primitive for masked attention on
-    Arc GPUs; the math kernel is supported and the codec/AR attention is a
-    small fraction of total runtime.
-    """
-    if device.type == "xpu":
-        return sdpa_kernel(SDPBackend.MATH)
-    return nullcontext()
+def _resolve_backend(name: str) -> str:
+    if name not in ("auto", "torch", "openvino"):
+        raise ValueError("backend must be 'auto', 'torch', or 'openvino'")
+    if name == "openvino":
+        if ov_backend is None:
+            raise ValueError("OpenVINO is not installed")
+        return "openvino"
+    if name == "auto" and ov_backend is not None and ov_backend.has_gpu():
+        return "openvino"
+    return "torch"
 
 
 def _resolve_device(name: str) -> str:
     if name == "auto":
         if torch.cuda.is_available():
             return "cuda"
-        if _xpu_available():
-            return "xpu"
         if torch.backends.mps.is_available():
             return "mps"
         return "cpu"
     if name.startswith("cuda") and not torch.cuda.is_available():
         raise ValueError("CUDA is not available")
-    if name.startswith("xpu") and not _xpu_available():
-        raise ValueError("XPU is not available")
+    if name.startswith("xpu"):
+        raise ValueError("XPU support was removed; use backend='openvino'")
     if name == "mps" and not torch.backends.mps.is_available():
         raise ValueError("MPS is not available")
     return name

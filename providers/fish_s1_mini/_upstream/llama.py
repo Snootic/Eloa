@@ -150,7 +150,7 @@ class KVCache(nn.Module):
 
         # Only the populated prefix participates in attention. Without this
         # slice every decode step attends over max_seq_len keys (8192 here),
-        # which dominates CPU/XPU latency.
+        # which dominates CPU/GPU latency.
         length = int(input_pos.max()) + 1
         return k_out[:, :, :length], v_out[:, :, :length]
 

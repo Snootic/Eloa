@@ -17,9 +17,11 @@ from tts_core.registry import ProviderRegistry
 
 logger = logging.getLogger(__name__)
 
+# Fish is imported first on purpose: its OpenVINO module must create
+# ov.Core() before torch initializes the Intel GPU stack.
 _BUILTINS = (
-    ("providers.pocket_tts", "PocketTTSProvider"),
     ("providers.fish_s1_mini", "FishS1MiniProvider"),
+    ("providers.pocket_tts", "PocketTTSProvider"),
 )
 
 __all__ = ["register_builtin_providers"]
