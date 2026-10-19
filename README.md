@@ -165,9 +165,24 @@ Supported options are `talker`, `codec`, `binary`, `codec_binary`, `device`,
 Russian, Portuguese, Spanish, and Italian.
 
 Reference clips can be any audio format: the provider resamples them to 24 kHz
-with ffmpeg, runs `qwen-codec`, and caches the `.spk` embedding. Exporting a
-voice writes the `.spk` into `voices/`, so later requests only need
-`voice`/`options`. The 0.6B model needs about 1.3 GB of GGUF weights.
+with ffmpeg, runs `qwen-codec`, and caches the `.spk` embedding plus `.rvq`
+codes. Exporting a voice writes `.spk`, `.rvq`, and `.txt` into `voices/`, so
+later requests only need `voice`/`options`. The 0.6B model needs about 1.3 GB
+of GGUF weights.
+
+**Supply a reference transcript.** Voice cloning with the speaker embedding
+alone (x-vector) did not preserve the test voice: Q4_K_M 1.7B produced a
+112 Hz male voice and Q8_0 0.6B a 197 Hz voice, versus 264 Hz for the
+reference. ICL with `.rvq` + the reference transcript moved them to 209 Hz and
+238 Hz and produced the correct speaker. The provider uses ICL automatically
+when the voice has a `.rvq` and a `.txt`/`.lab` sidecar. Over HTTP, send
+`reference_text` to the clone endpoint; from Python, place `<clip>.lab` next
+to the reference or `<name>.txt` next to `voices/<name>.spk`.
+
+Qwen3-TTS exposes only a single `portuguese` language token, with no separate
+pt-BR mode. ICL conditions on the reference and transcript, which is the best
+available lever for Brazilian accent, but the model cannot guarantee pt-BR
+phonology; judge that by listening.
 
 Measured here with the 0.6B Q8 model on an Arc B580: **5.3× realtime warm**
 (13.0 s audio in 2.5 s), and **2.2× end-to-end through the provider** for a

@@ -3,8 +3,9 @@
 The model runs in the external ``qwen-tts`` binary; this provider keeps the
 engine contract native by invoking it with ``-o -`` and decoding the WAV that
 it writes to stdout. Reference voices are converted to 24 kHz with ffmpeg and
-encoded once into a ``.spk`` speaker embedding with ``qwen-codec``; later
-requests pass ``--ref-spk`` and skip the encoder entirely.
+encoded once with ``qwen-codec``. When a transcript sidecar is available the
+provider uses ICL (``.spk`` + ``.rvq`` + ``.txt``), which preserves the
+speaker; without one it falls back to x-vector-only conditioning.
 """
 
 import hashlib
@@ -63,9 +64,23 @@ PER_REQUEST_OPTIONS = frozenset(
 
 @dataclass(frozen=True)
 class QwenVoiceState:
-    """A reference voice reduced to its 1024-dim speaker embedding."""
+    """Reference conditioning: speaker embedding plus optional ICL codes."""
 
     spk: Path
+    rvq: Path | None = None
+    ref_text: Path | None = None
+
+
+def _transcript_for(path: Path) -> Path | None:
+    """Find a non-empty .lab/.txt sidecar for a reference clip or voice."""
+    for suffix in (".txt", ".lab"):
+        candidate = path.with_suffix(suffix)
+        if (
+            candidate.is_file()
+            and candidate.read_text(encoding="utf-8", errors="replace").strip()
+        ):
+            return candidate
+    return None
 
 
 def _resolve_executable(value: str, label: str) -> Path:
@@ -121,10 +136,21 @@ class Qwen3TTSModel(SynthesisModel):
             )
         return result.stdout
 
-    def _embedding_for(self, source: Path) -> Path:
+    def _conditioning_for(self, source: Path) -> QwenVoiceState:
         if source.suffix.lower() == ".spk" and source.is_file():
-            return source
+            rvq = source.with_suffix(".rvq")
+            return QwenVoiceState(
+                spk=source,
+                rvq=rvq if rvq.is_file() else None,
+                ref_text=_transcript_for(source),
+            )
 
+        transcript_path = _transcript_for(source)
+        transcript = (
+            transcript_path.read_text(encoding="utf-8", errors="replace").strip()
+            if transcript_path
+            else ""
+        )
         stat = source.stat()
         key = hashlib.sha256(
             "\0".join(
@@ -135,12 +161,19 @@ class Qwen3TTSModel(SynthesisModel):
                     str(self._talker),
                     str(self._codec),
                     self._device,
+                    transcript,
                 )
             ).encode()
         ).hexdigest()
         spk = CACHE_DIR / f"{key}.spk"
-        if spk.is_file():
-            return spk
+        rvq = CACHE_DIR / f"{key}.rvq"
+        ref_text = CACHE_DIR / f"{key}.txt"
+        if spk.is_file() and (not transcript or (rvq.is_file() and ref_text.is_file())):
+            return QwenVoiceState(
+                spk,
+                rvq if rvq.is_file() else None,
+                ref_text if ref_text.is_file() else None,
+            )
 
         wav = CACHE_DIR / f"{key}.wav"
         try:
@@ -189,10 +222,22 @@ class Qwen3TTSModel(SynthesisModel):
                 raise RuntimeError(
                     f"qwen-codec did not produce a speaker embedding for {source}"
                 )
-            return spk
+            if transcript:
+                if not rvq.is_file():
+                    raise RuntimeError(
+                        f"qwen-codec did not produce ICL codes for {source}"
+                    )
+                ref_text.write_text(transcript + "\n", encoding="utf-8")
+            else:
+                rvq.unlink(missing_ok=True)
+                ref_text.unlink(missing_ok=True)
+            return QwenVoiceState(
+                spk,
+                rvq if rvq.is_file() else None,
+                ref_text if ref_text.is_file() else None,
+            )
         finally:
             wav.unlink(missing_ok=True)
-            wav.with_suffix(".rvq").unlink(missing_ok=True)
 
     def load_voice(
         self, source: str | Path | None, *, name: str | None = None
@@ -205,11 +250,17 @@ class Qwen3TTSModel(SynthesisModel):
         path = Path(source)
         if not path.is_file():
             raise FileNotFoundError(f"Reference audio not found: {path}")
-        return QwenVoiceState(self._embedding_for(path))
+        return self._conditioning_for(path)
 
     def export_voice(self, voice: QwenVoiceState, destination: Path) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(voice.spk, destination)
+        for suffix, source in ((".rvq", voice.rvq), (".txt", voice.ref_text)):
+            target = destination.with_suffix(suffix)
+            if source is None:
+                target.unlink(missing_ok=True)
+            else:
+                shutil.copyfile(source, target)
 
     def synthesize(
         self,
@@ -227,8 +278,6 @@ class Qwen3TTSModel(SynthesisModel):
             str(self._codec),
             "--device",
             self._device,
-            "--lang",
-            str(opts["language"]),
             "--ref-spk",
             str(voice.spk),
             "--format",
@@ -236,6 +285,16 @@ class Qwen3TTSModel(SynthesisModel):
             "-o",
             "-",
         ]
+        language = str(opts["language"] or "").strip()
+        if language and language.lower() != "auto":
+            command += ["--lang", language]
+        if voice.rvq is not None and voice.ref_text is not None:
+            command += [
+                "--ref-rvq",
+                str(voice.rvq),
+                "--ref-text",
+                str(voice.ref_text),
+            ]
         if int(opts["seed"]) >= 0:
             command += ["--seed", str(int(opts["seed"]))]
         if opts["temperature"] is not None:
