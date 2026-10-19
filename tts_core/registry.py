@@ -66,8 +66,10 @@ def default_registry() -> ProviderRegistry:
     global _default_registry
     if _default_registry is None:
         registry = ProviderRegistry()
-        _load_entry_points(registry)
+        # Built-ins load first so the Fish provider can create ov.Core()
+        # before any entry point imports torch and claims the Intel GPU.
         _load_builtin_providers(registry)
+        _load_entry_points(registry)
         _default_registry = registry
     return _default_registry
 
