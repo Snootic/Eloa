@@ -30,9 +30,11 @@ COPY tts_core ./tts_core
 COPY providers ./providers
 COPY server ./server
 COPY main.py torching.py ./
+COPY config ./config
 
 ENV TTS_PROVIDER=pocket-tts \
     TTS_MODEL=portuguese \
+    TTS_MODEL_CATALOG=/app/config/models.json \
     TTS_VOICE=camilly-portuguese \
     TTS_HOST=0.0.0.0 \
     TTS_PORT=8082

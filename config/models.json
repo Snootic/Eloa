@@ -1,0 +1,29 @@
+{
+  "qwen3-tts": {
+    "models_dir": "models",
+    "talker_pattern": "qwen-talker-{size}-base-{quant}.gguf",
+    "codec": "qwen-tokenizer-12hz-Q8_0.gguf",
+    "models": {
+      "qwen3-tts-0.6b": {"size": "0.6b", "quant": "Q8_0"},
+      "qwen3-tts-0.6b-q8": {"size": "0.6b", "quant": "Q8_0"},
+      "qwen3-tts-0.6b-q6": {"size": "0.6b", "quant": "Q6_K"},
+      "qwen3-tts-0.6b-q5": {"size": "0.6b", "quant": "Q5_K_M"},
+      "qwen3-tts-0.6b-q4": {"size": "0.6b", "quant": "Q4_K_M"},
+      "qwen3-tts-1.7b": {"size": "1.7b", "quant": "Q8_0"},
+      "qwen3-tts-1.7b-q8": {"size": "1.7b", "quant": "Q8_0"},
+      "qwen3-tts-1.7b-q6": {"size": "1.7b", "quant": "Q6_K"},
+      "qwen3-tts-1.7b-q5": {"size": "1.7b", "quant": "Q5_K_M"},
+      "qwen3-tts-1.7b-q4": {"size": "1.7b", "quant": "Q4_K_M"}
+    }
+  },
+  "neutts": {
+    "models": {
+      "neutts-air": {"backbone_repo": "neuphonic/neutts-air", "language": "en-us"},
+      "neutts-air-q8": {"backbone_repo": "neuphonic/neutts-air-q8-gguf", "language": "en-us"},
+      "neutts-air-q4": {"backbone_repo": "neuphonic/neutts-air-q4-gguf", "language": "en-us"},
+      "neutts-nano": {"backbone_repo": "neuphonic/neutts-nano", "language": "en-us"},
+      "neutts-nano-q8": {"backbone_repo": "neuphonic/neutts-nano-q8-gguf", "language": "en-us"},
+      "neutts-nano-q4": {"backbone_repo": "neuphonic/neutts-nano-q4-gguf", "language": "en-us"}
+    }
+  }
+}

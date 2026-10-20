@@ -1,0 +1,8 @@
+{
+  "qwen3-tts": {
+    "models_dir": "/models",
+    "binary": "/opt/qwentts/qwen-tts",
+    "codec_binary": "/opt/qwentts/qwen-codec",
+    "codec_chunk_dur": 4
+  }
+}

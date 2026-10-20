@@ -29,6 +29,7 @@ COPY tts_core ./tts_core
 COPY providers ./providers
 COPY server ./server
 COPY main.py torching.py ./
+COPY config ./config
 
 FROM ${OPENVINO_BASE}
 USER 0
@@ -41,6 +42,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HOME=/cache/huggingface \
     TTS_PROVIDER=chatterbox-turbo-ov \
     TTS_MODEL=chatterbox-turbo \
+    TTS_MODEL_CATALOG=/app/config/models.json \
     TTS_VOICE=ad-women \
     TTS_VOICE_SOURCE=/app/voices/ad-women.wav \
     TTS_OPTIONS='{"device":"GPU"}' \

@@ -19,6 +19,7 @@ services:
       <<: *hf
       TTS_PROVIDER: pocket-tts
       TTS_MODEL: portuguese
+      TTS_MODEL_CATALOG: /app/config/models.json
       TTS_VOICE: camilly-portuguese
     restart: unless-stopped
 
@@ -41,6 +42,7 @@ services:
       <<: *hf
       TTS_PROVIDER: chatterbox-turbo-ov
       TTS_MODEL: chatterbox-turbo
+      TTS_MODEL_CATALOG: /app/config/models.json
       TTS_VOICE: ad-women
       TTS_VOICE_SOURCE: /app/voices/ad-women.wav
       TTS_OPTIONS: '{"device":"GPU"}'
@@ -69,7 +71,9 @@ services:
       TTS_MODEL: qwen3-tts-0.6b
       TTS_VOICE: helena
       TTS_VOICE_SOURCE: /app/benchmarks/helena/helena-24k.wav
-      TTS_OPTIONS: '{"talker":"/models/qwen-talker-0.6b-base-Q8_0.gguf","codec":"/models/qwen-tokenizer-12hz-Q8_0.gguf","binary":"/opt/qwentts/qwen-tts","codec_binary":"/opt/qwentts/qwen-codec","device":"Vulkan0","codec_chunk_dur":4}'
+      TTS_MODEL_CATALOG: /app/config/models.json
+      TTS_PROVIDER_OPTIONS_FILE: /app/config/providers.json
+      TTS_PROVIDER_OPTIONS: '{"qwen3-tts":{"device":"Vulkan0"}}'
     restart: unless-stopped
 
   cuda:
@@ -94,7 +98,9 @@ services:
       TTS_MODEL: qwen3-tts-0.6b
       TTS_VOICE: helena
       TTS_VOICE_SOURCE: /app/benchmarks/helena/helena-24k.wav
-      TTS_OPTIONS: '{"talker":"/models/qwen-talker-0.6b-base-Q8_0.gguf","codec":"/models/qwen-tokenizer-12hz-Q8_0.gguf","binary":"/opt/qwentts/qwen-tts","codec_binary":"/opt/qwentts/qwen-codec","device":"CUDA0","codec_chunk_dur":4}'
+      TTS_MODEL_CATALOG: /app/config/models.json
+      TTS_PROVIDER_OPTIONS_FILE: /app/config/providers.json
+      TTS_PROVIDER_OPTIONS: '{"qwen3-tts":{"device":"CUDA0"}}'
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
     shm_size: "2gb"

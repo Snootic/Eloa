@@ -17,6 +17,7 @@ import torch
 from neutts import NeuTTS
 
 from tts_core.audio import AudioChunk
+from tts_core.model_catalog import load_model_catalog
 from tts_core.provider import SynthesisModel, TTSProvider
 
 logger = logging.getLogger(__name__)
@@ -34,10 +35,12 @@ DEFAULT_OPTIONS: dict[str, Any] = {
 }
 ALLOWED_OPTIONS = frozenset(DEFAULT_OPTIONS)
 PER_REQUEST_OPTIONS = frozenset({"temperature", "top_k"})
-MODEL_DEFAULTS = {
-    "neutts-air": ("neuphonic/neutts-air", "en-us"),
-    "neutts-nano": ("neuphonic/neutts-nano", "en-us"),
+FALLBACK_MODELS = {
+    "neutts-air": {"backbone_repo": "neuphonic/neutts-air", "language": "en-us"},
+    "neutts-nano": {"backbone_repo": "neuphonic/neutts-nano", "language": "en-us"},
 }
+NEUTTS_CATALOG = load_model_catalog().get("neutts", {})
+MODEL_ALIASES = {**FALLBACK_MODELS, **NEUTTS_CATALOG.get("models", {})}
 
 
 def _transcript_for(path: Path) -> str | None:
@@ -127,7 +130,7 @@ class NeutTSProvider(TTSProvider):
 
     name: ClassVar[str] = "neutts"
     voice_extension: ClassVar[str] = "pt"
-    available_models: ClassVar[tuple[str, ...]] = ("neutts-air", "neutts-nano")
+    available_models: ClassVar[tuple[str, ...]] = tuple(MODEL_ALIASES)
     default_voice: ClassVar[str | None] = None
     default_voice_source: ClassVar[str | None] = None
 
@@ -136,13 +139,11 @@ class NeutTSProvider(TTSProvider):
         if unknown:
             raise ValueError(f"Unknown neutts options: {', '.join(unknown)}")
         resolved = {**DEFAULT_OPTIONS, **options}
-        default_repo, default_language = MODEL_DEFAULTS.get(
-            model, MODEL_DEFAULTS["neutts-nano"]
-        )
+        spec = MODEL_ALIASES.get(model, FALLBACK_MODELS["neutts-nano"])
         if resolved["backbone_repo"] is None:
-            resolved["backbone_repo"] = default_repo
+            resolved["backbone_repo"] = spec.get("backbone_repo")
         if resolved["language"] is None:
-            resolved["language"] = default_language
+            resolved["language"] = spec.get("language", "en-us")
         return {"model": model, **resolved}
 
     def model_cache_options(self, options: Mapping[str, Any]) -> Mapping[str, Any]:

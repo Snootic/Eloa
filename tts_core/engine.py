@@ -45,6 +45,7 @@ class TTSEngine:
         provider: str = "pocket-tts",
         model: str = "english",
         options: Mapping[str, Any] | None = None,
+        provider_options: Mapping[str, Mapping[str, Any]] | None = None,
         voice: str | None = None,
         voices_dir: str | Path = "voices",
         default_voice_source: str | Path | None = None,
@@ -75,6 +76,9 @@ class TTSEngine:
         self._default_provider = provider
         self._default_model = model
         self._default_options = dict(options or {})
+        self._provider_options = {
+            name: dict(values) for name, values in (provider_options or {}).items()
+        }
         # The voice selected at startup belongs to the startup provider; other
         # providers fall back to their own default voice.
         self._default_voices: dict[str, str] = {}
@@ -91,7 +95,11 @@ class TTSEngine:
         self, provider_name: str, model: str, options: Mapping[str, Any] | None
     ) -> ActiveModel:
         provider = self._registry.get(provider_name)
-        merged = {**self._default_options, **(options or {})}
+        merged = {
+            **self._default_options,
+            **self._provider_options.get(provider_name, {}),
+            **(options or {}),
+        }
         resolved = provider.resolve_options(model, merged)
         key: ModelKey = (
             provider_name,

@@ -47,14 +47,32 @@ curl -X POST http://127.0.0.1:8082/v1/audio/speech \
 `provider` and `model` are optional and fall back to the engine defaults.
 `options` carries provider-specific tuning; for Pocket TTS it accepts
 `temp`, `lsd_decode_steps`, `noise_clamp`, `eos_threshold`, `quantize`, and
-`config`. `GET /v1/audio/providers` lists every registered provider, its
-default voice, and the voices exported under `voices/`.
+`config`. Deployment-wide provider options can be scoped with
+`TTS_PROVIDER_OPTIONS={"qwen3-tts":{...}}`; only the selected provider receives
+that map, so Qwen binary/model paths cannot leak into Pocket or Kokoro.
+`GET /v1/audio/providers` lists every registered provider, its default voice,
+and the voices exported under `voices/`.
 
 The WebSocket endpoint `ws://127.0.0.1:8082/v1/audio/speech/stream` takes the
 same request body and replies with a `speech.start` event (format, sample
 rate, channels), binary audio frames, then `speech.done`. PCM16 HTTP responses
 carry `X-Sample-Rate` and `X-Audio-Format` headers; use them instead of
 assuming 24 kHz.
+
+### Qwen3-TTS on Vulkan (workstation)
+
+`run_qwen_vulkan.sh [model-alias]` starts Qwen3-TTS on an Intel Arc GPU. The
+model alias selects the GGUF without editing talker/codec paths:
+
+```sh
+./run_qwen_vulkan.sh
+# persistent user service
+systemctl --user enable --now qwen-tts.service
+```
+
+`TTS_PROVIDER_OPTIONS` keeps those paths under `qwen3-tts`; other providers
+never receive them. Expose the local port to a Docker gateway on another host
+with a Tailscale TCP proxy (`tailscale serve --tcp 18084 tcp://127.0.0.1:8084`).
 
 ### Test pages
 
@@ -122,7 +140,10 @@ All images use the same configurable entrypoint:
 | `TTS_MODEL` | `portuguese` |
 | `TTS_VOICE` | `camilly-portuguese` |
 | `TTS_VOICE_SOURCE` | unset |
-| `TTS_OPTIONS` | `{}` (JSON object) |
+| `TTS_OPTIONS` | `{}` (JSON object, applied to every provider) |
+| `TTS_PROVIDER_OPTIONS` | `{}` (JSON map keyed by provider name) |
+| `TTS_PROVIDER_OPTIONS_FILE` | unset (shared JSON map; env options win) |
+| `TTS_MODEL_CATALOG` | `config/models.json` |
 | `TTS_VOICES_DIR` | `voices` |
 | `TTS_MAX_CACHED_MODELS` | `2` |
 | `TTS_HOST` / `TTS_PORT` | `0.0.0.0` / `8082` |
@@ -173,8 +194,11 @@ The OpenVINO profile defaults to `chatterbox-turbo-ov` with
 installed provider. Fish is gated and needs `HF_TOKEN`.
 
 The Qwen images build `qwentts.cpp` at commit `5916bf7`. The Vulkan profile
-uses `Vulkan0`; CUDA uses `CUDA0`. Q4_K_M is not recommended for the 0.6B
-talker; use Q8_0 or the Q6_K file.
+uses `Vulkan0`; CUDA uses `CUDA0`. The images read model aliases from
+`/app/config/models.json` and provider defaults from `/app/config/providers.json`,
+so changing `TTS_MODEL` (for example to `qwen3-tts-0.6b-q6`) or the request
+`model` switches quantizations without editing binary/model paths. Q4_K_M is
+not recommended for the 0.6B talker; use Q8_0 or Q6_K.
 
 ## Kokoro (CPU)
 
@@ -233,6 +257,36 @@ repos. There is no official Portuguese Nano. Measured on CPU here: Air **0.24–
 0.25× realtime**, Pocket TTS **2.2–2.9×** on the same clips. The official Nano
 could not be benchmarked because its weights/codec are gated; details and the
 Air/Pocket audio are in `benchmarks/neutts/`.
+
+## Model aliases and GGUF quantization
+
+`config/models.json` is the shared alias catalog used by the providers and
+copied into the Docker images. Qwen aliases resolve to
+`models/qwen-talker-{size}-base-{quant}.gguf` automatically:
+
+| Alias | Talker |
+|---|---|
+| `qwen3-tts-0.6b` / `-q8` | 0.6B Q8_0 |
+| `qwen3-tts-0.6b-q6` | 0.6B Q6_K |
+| `qwen3-tts-0.6b-q5` | 0.6B Q5_K_M |
+| `qwen3-tts-0.6b-q4` | 0.6B Q4_K_M |
+| `qwen3-tts-1.7b*` | 1.7B Q8/Q6/Q5/Q4 |
+
+Set `TTS_MODEL=qwen3-tts-0.6b-q6` (or send `"model"` in the request) to switch
+quantization without changing binary, codec, or voice. `models_dir` points at
+the GGUF directory; explicit `talker`/`codec` options still override the alias.
+`Q4_K_M` is listed for completeness but is broken for the 0.6B talker.
+
+NeuTTS exposes `neutts-air-q4/q8` and `neutts-nano-q4/q8` aliases; those
+repositories are gated.
+
+Exported Qwen voices include `.spk`, `.rvq`, `.txt`, and `.ref.wav`; switching
+between 0.6B and 1.7B regenerates the size-specific speaker embedding from the
+reference clip automatically.
+
+`config/providers.json` holds deployment-wide provider options. Use
+`TTS_PROVIDER_OPTIONS_FILE=/app/config/providers.json` plus a small
+`TTS_PROVIDER_OPTIONS` override for the device.
 
 ## Qwen3-TTS (GGML / Vulkan)
 

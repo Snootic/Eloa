@@ -53,6 +53,7 @@ COPY tts_core ./tts_core
 COPY providers ./providers
 COPY server ./server
 COPY main.py torching.py ./
+COPY config ./config
 
 FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04
 
@@ -65,9 +66,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HOME=/cache/huggingface \
     TTS_PROVIDER=qwen3-tts \
     TTS_MODEL=qwen3-tts-0.6b \
+    TTS_MODEL_CATALOG=/app/config/models.json \
+    TTS_PROVIDER_OPTIONS_FILE=/app/config/providers.json \
+    TTS_PROVIDER_OPTIONS='{"qwen3-tts":{"device":"CUDA0"}}' \
     TTS_VOICE=helena \
     TTS_VOICE_SOURCE=/app/benchmarks/helena/helena-24k.wav \
-    TTS_OPTIONS='{"talker":"/models/qwen-talker-0.6b-base-Q8_0.gguf","codec":"/models/qwen-tokenizer-12hz-Q8_0.gguf","binary":"/opt/qwentts/qwen-tts","codec_binary":"/opt/qwentts/qwen-codec","device":"CUDA0","codec_chunk_dur":4}' \
     TTS_HOST=0.0.0.0 \
     TTS_PORT=8082
 

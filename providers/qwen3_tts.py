@@ -11,6 +11,7 @@ speaker; without one it falls back to x-vector-only conditioning.
 import hashlib
 import io
 import logging
+import re
 import shutil
 import subprocess
 import tempfile
@@ -23,6 +24,7 @@ import numpy as np
 import soundfile as sf
 
 from tts_core.audio import AudioChunk
+from tts_core.model_catalog import load_model_catalog
 from tts_core.provider import SynthesisModel, TTSProvider
 
 logger = logging.getLogger(__name__)
@@ -30,8 +32,37 @@ logger = logging.getLogger(__name__)
 SAMPLE_RATE = 24_000
 CACHE_DIR = Path(tempfile.gettempdir()) / "pocket-tts-qwen3"
 
+CATALOG = load_model_catalog().get("qwen3-tts", {})
+CATALOG_MODELS = CATALOG.get("models", {})
+FALLBACK_MODELS = {
+    "qwen3-tts-0.6b": {"size": "0.6b", "quant": "Q8_0"},
+    "qwen3-tts-0.6b-q8": {"size": "0.6b", "quant": "Q8_0"},
+    "qwen3-tts-0.6b-q6": {"size": "0.6b", "quant": "Q6_K"},
+    "qwen3-tts-0.6b-q5": {"size": "0.6b", "quant": "Q5_K_M"},
+    "qwen3-tts-0.6b-q4": {"size": "0.6b", "quant": "Q4_K_M"},
+    "qwen3-tts-1.7b": {"size": "1.7b", "quant": "Q8_0"},
+    "qwen3-tts-1.7b-q8": {"size": "1.7b", "quant": "Q8_0"},
+    "qwen3-tts-1.7b-q6": {"size": "1.7b", "quant": "Q6_K"},
+    "qwen3-tts-1.7b-q5": {"size": "1.7b", "quant": "Q5_K_M"},
+    "qwen3-tts-1.7b-q4": {"size": "1.7b", "quant": "Q4_K_M"},
+}
+MODEL_ALIASES = {**FALLBACK_MODELS, **CATALOG_MODELS}
+TALKER_PATTERN = CATALOG.get("talker_pattern", "qwen-talker-{size}-base-{quant}.gguf")
+DEFAULT_CODEC = CATALOG.get("codec", "qwen-tokenizer-12hz-Q8_0.gguf")
+QUANT_ALIASES = {
+    "q8": "Q8_0",
+    "q8_0": "Q8_0",
+    "q6": "Q6_K",
+    "q6_k": "Q6_K",
+    "q5": "Q5_K_M",
+    "q5_k_m": "Q5_K_M",
+    "q4": "Q4_K_M",
+    "q4_k_m": "Q4_K_M",
+}
+
 DEFAULT_OPTIONS: dict[str, Any] = {
     "talker": None,
+    "models_dir": None,
     "codec": None,
     "binary": None,
     "codec_binary": None,
@@ -69,6 +100,7 @@ class QwenVoiceState:
     spk: Path
     rvq: Path | None = None
     ref_text: Path | None = None
+    source: Path | None = None
 
 
 def _transcript_for(path: Path) -> Path | None:
@@ -136,13 +168,33 @@ class Qwen3TTSModel(SynthesisModel):
             )
         return result.stdout
 
+    def _expected_spk_bytes(self) -> int:
+        return 8192 if "1.7b" in self._talker.name.lower() else 4096
+
+    @staticmethod
+    def _reference_audio_for(spk: Path) -> Path | None:
+        for suffix in (".wav", ".mp3", ".flac", ".ogg", ".ref.wav", ".ref.mp3"):
+            candidate = spk.with_suffix(suffix)
+            if candidate.is_file():
+                return candidate
+        return None
+
     def _conditioning_for(self, source: Path) -> QwenVoiceState:
         if source.suffix.lower() == ".spk" and source.is_file():
+            if source.stat().st_size != self._expected_spk_bytes():
+                reference = self._reference_audio_for(source)
+                if reference is None:
+                    raise ValueError(
+                        f"Speaker embedding {source} was built for a different "
+                        "model size; export the voice from its reference audio"
+                    )
+                return self._conditioning_for(reference)
             rvq = source.with_suffix(".rvq")
             return QwenVoiceState(
                 spk=source,
                 rvq=rvq if rvq.is_file() else None,
                 ref_text=_transcript_for(source),
+                source=self._reference_audio_for(source),
             )
 
         transcript_path = _transcript_for(source)
@@ -173,6 +225,7 @@ class Qwen3TTSModel(SynthesisModel):
                 spk,
                 rvq if rvq.is_file() else None,
                 ref_text if ref_text.is_file() else None,
+                source=source,
             )
 
         wav = CACHE_DIR / f"{key}.wav"
@@ -235,6 +288,7 @@ class Qwen3TTSModel(SynthesisModel):
                 spk,
                 rvq if rvq.is_file() else None,
                 ref_text if ref_text.is_file() else None,
+                source=source,
             )
         finally:
             wav.unlink(missing_ok=True)
@@ -261,6 +315,12 @@ class Qwen3TTSModel(SynthesisModel):
                 target.unlink(missing_ok=True)
             else:
                 shutil.copyfile(source, target)
+        for suffix in (".ref.wav", ".ref.mp3"):
+            destination.with_suffix(suffix).unlink(missing_ok=True)
+        if voice.source is not None:
+            shutil.copyfile(
+                voice.source, destination.with_suffix(f".ref{voice.source.suffix}")
+            )
 
     def synthesize(
         self,
@@ -324,24 +384,45 @@ class Qwen3TTSProvider(TTSProvider):
 
     name: ClassVar[str] = "qwen3-tts"
     voice_extension: ClassVar[str] = "spk"
-    available_models: ClassVar[tuple[str, ...]] = (
-        "qwen3-tts-0.6b",
-        "qwen3-tts-1.7b",
-    )
+    available_models: ClassVar[tuple[str, ...]] = tuple(MODEL_ALIASES)
     default_voice: ClassVar[str | None] = None
     default_voice_source: ClassVar[str | None] = None
+
+    @staticmethod
+    def _model_spec(model: str) -> dict[str, str]:
+        spec = MODEL_ALIASES.get(model)
+        if isinstance(spec, dict) and "size" in spec and "quant" in spec:
+            return {"size": str(spec["size"]), "quant": str(spec["quant"])}
+        size = "1.7b" if "1.7b" in model else "0.6b"
+        suffix = model.rsplit("-", 1)[-1].lower()
+        return {"size": size, "quant": QUANT_ALIASES.get(suffix, "Q8_0")}
 
     def resolve_options(self, model: str, options: Mapping[str, Any]) -> dict[str, Any]:
         unknown = sorted(set(options) - ALLOWED_OPTIONS)
         if unknown:
             raise ValueError(f"Unknown qwen3-tts options: {', '.join(unknown)}")
         resolved = {**DEFAULT_OPTIONS, **options}
-        size = "1.7b" if "1.7b" in model else "0.6b"
-        models = Path("models")
+        spec = self._model_spec(model)
+        models = Path(
+            str(resolved["models_dir"] or CATALOG.get("models_dir", "models"))
+        )
         if resolved["talker"] is None:
-            resolved["talker"] = str(models / f"qwen-talker-{size}-base-Q8_0.gguf")
+            talker = models / TALKER_PATTERN.format(
+                size=spec["size"], quant=spec["quant"]
+            )
+        else:
+            talker = Path(str(resolved["talker"]))
+            name = re.sub(r"(0\.6b|1\.7b)", spec["size"], talker.name)
+            name = re.sub(
+                r"(?:BF16|F32|Q\d+(?:_[A-Za-z0-9]+)*)\.gguf$",
+                f"{spec['quant']}.gguf",
+                name,
+            )
+            talker = talker.with_name(name)
+        resolved["talker"] = str(talker)
+        resolved["models_dir"] = str(models)
         if resolved["codec"] is None:
-            resolved["codec"] = str(models / "qwen-tokenizer-12hz-Q8_0.gguf")
+            resolved["codec"] = str(models / DEFAULT_CODEC)
         if resolved["binary"] is None:
             resolved["binary"] = "build/qwen-tts"
         if resolved["codec_binary"] is None:
