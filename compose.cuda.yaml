@@ -20,6 +20,8 @@ services:
       TTS_PROVIDER: qwen3-tts
       TTS_MODEL: qwen3-tts-0.6b
       TTS_VOICE: eloa
+      TTS_FALLBACK_PROVIDER: pocket-tts
+      TTS_FALLBACK_MODEL: portuguese
       TTS_MAX_LOADED_MODELS: "1"
       TTS_LAZY_LOAD: "1"
       TTS_PROVIDER_OPTIONS_FILE: /app/config/providers.json

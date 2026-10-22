@@ -170,6 +170,9 @@ All images use the same configurable entrypoint:
 | `TTS_LAZY_LOAD` | `1` (load the model on the first request) |
 | `TTS_MAX_LOADED_MODELS` | `1` (LRU-unload other providers/models) |
 | `TTS_MAX_CACHED_MODELS` | deprecated alias for `TTS_MAX_LOADED_MODELS` |
+| `TTS_FALLBACK_PROVIDER` | unset (for Qwen Compose: `pocket-tts`) |
+| `TTS_FALLBACK_MODEL` | unset (for Qwen Compose: `portuguese`) |
+| `TTS_FALLBACK_OPTIONS` | `{}` (JSON object for the fallback provider) |
 | `TTS_HOST` / `TTS_PORT` | `0.0.0.0` / `8082` |
 
 The CPU image installs the `kokoro` extra by default. Build it slimmer with
@@ -183,6 +186,23 @@ Chatterbox voice after Qwen unloads Qwen and closes its native context; set it
 to `2` (or higher) when both must stay warm. An in-flight stream keeps its
 model leased until the last byte is written, so an eviction cannot close a
 model mid-response.
+
+When `TTS_FALLBACK_PROVIDER` and `TTS_FALLBACK_MODEL` are set, a request for
+an unloaded provider/model starts that load in the background and immediately
+serves the request from the fallback instead. The fallback uses the same
+requested voice name, so a Qwen request for `eloa` is served by Pocket TTS's
+`eloa.safetensors` while Qwen's BF16 weights load. The fallback has its own
+model cache and does not consume `TTS_MAX_LOADED_MODELS`. Once the primary
+model finishes loading, later requests use it. If the fallback voice does not
+exist in that provider's format, the request waits for the primary model
+instead of failing. Qwen CUDA/Vulkan Compose files configure
+`pocket-tts`/`portuguese` as the fallback by default.
+
+HTTP responses expose the actual backend through `X-TTS-Provider`,
+`X-TTS-Model`, and `X-TTS-Fallback`; WebSocket `speech.start` carries the same
+fields. In the real host test, the first Qwen request returned Pocket audio in
+3.1 s with `X-TTS-Fallback: 1` while Qwen BF16 loaded in the background; the
+next request returned `qwen3-tts` with `X-TTS-Fallback: 0`.
 
 ### GPU prerequisites
 

@@ -26,6 +26,19 @@ class SpeechStream:
     chunks: Iterator[bytes]
     sample_rate: int
     audio_format: AudioFormat
+    provider: str = ""
+    model: str = ""
+    fallback: bool = False
+
+
+@dataclass(frozen=True)
+class ModelSelection:
+    """A provider/model pair resolved without loading its weights."""
+
+    key: ModelKey
+    provider: TTSProvider
+    model_name: str
+    options: Mapping[str, Any]
 
 
 @dataclass(frozen=True)
@@ -55,6 +68,9 @@ class TTSEngine:
         registry: ProviderRegistry | None = None,
         max_loaded_models: int = 1,
         lazy: bool = True,
+        fallback_provider: str | None = None,
+        fallback_model: str | None = None,
+        fallback_options: Mapping[str, Any] | None = None,
     ):
         """Configure the engine without necessarily loading a model.
 
@@ -63,12 +79,24 @@ class TTSEngine:
         introspection call. Set ``max_loaded_models`` to keep more than one
         provider/model resident; the least-recently-used model is unloaded when
         a new one would exceed the limit.
+
+        When ``fallback_provider``/``fallback_model`` are set, a request for an
+        unloaded provider/model starts that load in the background and is served
+        by the fallback provider instead. The fallback uses the requested voice
+        name and keeps its own model cache, so it does not consume the main
+        model limit.
         """
         if max_loaded_models < 1:
             raise ValueError("max_loaded_models must be at least 1")
+        if fallback_provider is not None and fallback_model is None:
+            raise ValueError(
+                "fallback_model is required when fallback_provider is configured"
+            )
 
         self._registry = registry if registry is not None else default_registry()
         self._registry.get(provider)
+        if fallback_provider is not None:
+            self._registry.get(fallback_provider)
         self._voices_dir = Path(voices_dir)
         self._default_voice_source = default_voice_source
         self._max_loaded_models = max_loaded_models
@@ -82,6 +110,8 @@ class TTSEngine:
         # leases are closed as soon as the last stream releases them.
         self._leases: dict[ModelKey, int] = {}
         self._retired: dict[ModelKey, list[SynthesisModel]] = {}
+        self._loading: set[ModelKey] = set()
+        self._loading_events: dict[ModelKey, threading.Event] = {}
         self._lock = threading.RLock()
         self._active: ActiveModel | None = None
         self._active_voice: str | None = None
@@ -97,6 +127,20 @@ class TTSEngine:
         self._default_voices: dict[str, str] = {}
         if voice is not None:
             self._default_voices[provider] = voice
+        self._fallback_provider = fallback_provider
+        self._fallback_model = fallback_model
+        self._fallback: TTSEngine | None = None
+        if fallback_provider is not None:
+            self._fallback = TTSEngine(
+                provider=fallback_provider,
+                model=fallback_model,
+                options=fallback_options or {},
+                provider_options=self._provider_options,
+                voices_dir=self._voices_dir,
+                registry=self._registry,
+                max_loaded_models=1,
+                lazy=True,
+            )
         if not lazy:
             active = self._select(provider, model, None)
             self._activate_voice(active, voice)
@@ -107,9 +151,9 @@ class TTSEngine:
     # Model and voice selection
     # ------------------------------------------------------------------
 
-    def _select(
+    def _resolve_selection(
         self, provider_name: str, model: str, options: Mapping[str, Any] | None
-    ) -> ActiveModel:
+    ) -> ModelSelection:
         provider = self._registry.get(provider_name)
         merged = {
             **self._default_options,
@@ -123,24 +167,87 @@ class TTSEngine:
                 provider.model_cache_options(resolved), sort_keys=True, default=str
             ),
         )
+        return ModelSelection(key, provider, model, resolved)
 
+    def _register_loaded(
+        self, selection: ModelSelection, synthesis: SynthesisModel
+    ) -> SynthesisModel:
+        """Insert a loaded model; caller must hold the engine lock."""
+        existing = self._models.get(selection.key)
+        if existing is not None:
+            self._models.move_to_end(selection.key)
+            if existing is not synthesis:
+                self._close_model(synthesis)
+            return existing
+        self._models[selection.key] = synthesis
+        self._voice_caches[selection.key] = {}
+        self._generation_locks[selection.key] = threading.Lock()
+        while len(self._models) > self._max_loaded_models:
+            self._evict_oldest()
+        return synthesis
+
+    def _select(
+        self, provider_name: str, model: str, options: Mapping[str, Any] | None
+    ) -> ActiveModel:
+        selection = self._resolve_selection(provider_name, model, options)
         with self._lock:
-            synthesis = self._models.get(key)
+            synthesis = self._models.get(selection.key)
             if synthesis is None:
-                synthesis = provider.load_model(resolved)
-                self._models[key] = synthesis
-                self._voice_caches[key] = {}
-                self._generation_locks[key] = threading.Lock()
-                while len(self._models) > self._max_loaded_models:
-                    self._evict_oldest()
+                synthesis = selection.provider.load_model(selection.options)
+                synthesis = self._register_loaded(selection, synthesis)
             else:
-                self._models.move_to_end(key)
+                self._models.move_to_end(selection.key)
 
-            if self._active is None or self._active.key != key:
+            if self._active is None or self._active.key != selection.key:
                 self._active_voice = None
-            active = ActiveModel(key, provider, model, resolved, synthesis)
+            active = ActiveModel(
+                selection.key,
+                selection.provider,
+                selection.model_name,
+                selection.options,
+                synthesis,
+            )
             self._active = active
             return active
+
+    def _start_background_load(self, selection: ModelSelection) -> None:
+        """Start loading a model without blocking the current request."""
+        with self._lock:
+            if selection.key in self._models or selection.key in self._loading:
+                return
+            self._loading.add(selection.key)
+            event = threading.Event()
+            self._loading_events[selection.key] = event
+        thread = threading.Thread(
+            target=self._background_load,
+            args=(selection, event),
+            daemon=True,
+            name=f"tts-load-{selection.key[0]}",
+        )
+        thread.start()
+
+    def _background_load(
+        self, selection: ModelSelection, event: threading.Event
+    ) -> None:
+        try:
+            synthesis = selection.provider.load_model(selection.options)
+        except Exception:
+            logger.exception(
+                "Could not load TTS model %s/%s",
+                selection.key[0],
+                selection.model_name,
+            )
+        else:
+            with self._lock:
+                self._register_loaded(selection, synthesis)
+            logger.info(
+                "Loaded TTS model %s/%s", selection.key[0], selection.model_name
+            )
+        finally:
+            with self._lock:
+                self._loading.discard(selection.key)
+                self._loading_events.pop(selection.key, None)
+            event.set()
 
     def _evict_oldest(self) -> None:
         """Remove the least-recently-used model, closing it when safe."""
@@ -279,10 +386,56 @@ class TTSEngine:
         The pair is captured before this call returns, so a later request may
         safely switch the engine's active selection.
         """
+        provider_name = provider or self._default_provider
+        model_name = model or self._default_model
+        selection = self._resolve_selection(provider_name, model_name, options)
+        if (
+            self._fallback is not None
+            and selection.provider.name != self._fallback_provider
+        ):
+            with self._lock:
+                loaded = selection.key in self._models
+            if not loaded:
+                self._start_background_load(selection)
+                try:
+                    fallback_stream = self._fallback.generate_for(
+                        provider=self._fallback_provider,
+                        model=self._fallback_model,
+                        voice=voice or self.default_voice(provider_name),
+                        text=text,
+                        audio_format=audio_format,
+                    )
+                except Exception:
+                    logger.warning(
+                        "CPU fallback failed for %s/%s; waiting for the model",
+                        selection.key[0],
+                        selection.model_name,
+                        exc_info=True,
+                    )
+                    event = self._loading_events.get(selection.key)
+                    if event is not None:
+                        event.wait()
+                else:
+                    logger.info(
+                        "Serving %s/%s from CPU fallback %s/%s while loading",
+                        selection.key[0],
+                        selection.model_name,
+                        self._fallback_provider,
+                        self._fallback_model,
+                    )
+                    return SpeechStream(
+                        chunks=fallback_stream.chunks,
+                        sample_rate=fallback_stream.sample_rate,
+                        audio_format=fallback_stream.audio_format,
+                        provider=self._fallback_provider or "",
+                        model=self._fallback_model or "",
+                        fallback=True,
+                    )
+
         with self._lock:
             active = self._select(
-                provider or self._default_provider,
-                model or self._default_model,
+                provider_name,
+                model_name,
                 options,
             )
             voice_state = self._activate_voice(active, voice)
@@ -311,6 +464,8 @@ class TTSEngine:
                 ),
                 sample_rate=sample_rate,
                 audio_format=audio_format,
+                provider=active.provider.name,
+                model=active.model_name,
             )
 
     def _serialized(

@@ -7,7 +7,9 @@ deployments can select another provider/model/voice without editing code:
   TTS_PROVIDER_OPTIONS (JSON map keyed by provider name),
   TTS_PROVIDER_OPTIONS_FILE (shared JSON map, overridden by TTS_PROVIDER_OPTIONS),
   TTS_MODEL_CATALOG (shared model alias catalog),
-  TTS_VOICES_DIR, TTS_LAZY_LOAD, TTS_MAX_LOADED_MODELS, TTS_HOST, TTS_PORT.
+  TTS_VOICES_DIR, TTS_LAZY_LOAD, TTS_MAX_LOADED_MODELS,
+  TTS_FALLBACK_PROVIDER, TTS_FALLBACK_MODEL, TTS_FALLBACK_OPTIONS,
+  TTS_HOST, TTS_PORT.
 """
 
 import json
@@ -80,6 +82,8 @@ def main() -> None:
             os.getenv("TTS_MAX_CACHED_MODELS", "1"),
         )
     )
+    fallback_provider = os.getenv("TTS_FALLBACK_PROVIDER") or None
+    fallback_model = os.getenv("TTS_FALLBACK_MODEL") or None
 
     engine = TTSEngine(
         provider=provider,
@@ -91,6 +95,9 @@ def main() -> None:
         default_voice_source=source,
         max_loaded_models=max_loaded_models,
         lazy=lazy,
+        fallback_provider=fallback_provider,
+        fallback_model=fallback_model,
+        fallback_options=_json_object("TTS_FALLBACK_OPTIONS"),
     )
 
     host = os.getenv("TTS_HOST", "0.0.0.0")

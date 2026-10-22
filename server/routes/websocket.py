@@ -52,6 +52,9 @@ async def speech_stream(websocket: WebSocket):
                     "format": str(stream.audio_format),
                     "sample_rate": stream.sample_rate,
                     "channels": 1,
+                    "provider": stream.provider,
+                    "model": stream.model,
+                    "fallback": stream.fallback,
                 }
             )
 

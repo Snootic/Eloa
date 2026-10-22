@@ -47,6 +47,9 @@ def speech(body: SpeechRequest, request: Request):
         headers={
             "X-Sample-Rate": str(stream.sample_rate),
             "X-Audio-Format": str(stream.audio_format),
+            "X-TTS-Provider": stream.provider,
+            "X-TTS-Model": stream.model,
+            "X-TTS-Fallback": "1" if stream.fallback else "0",
         },
     )
 

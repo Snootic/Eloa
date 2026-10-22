@@ -28,7 +28,13 @@ def create_http_server(engine: TTSEngine) -> FastAPI:
         allow_origins=["*"],
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["X-Sample-Rate", "X-Audio-Format"],
+        expose_headers=[
+            "X-Sample-Rate",
+            "X-Audio-Format",
+            "X-TTS-Provider",
+            "X-TTS-Model",
+            "X-TTS-Fallback",
+        ],
     )
     app.state.engine = engine
     app.state.engine_lock = asyncio.Lock()
