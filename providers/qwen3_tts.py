@@ -50,6 +50,7 @@ FALLBACK_MODELS = {
 MODEL_ALIASES = {**FALLBACK_MODELS, **CATALOG_MODELS}
 TALKER_PATTERN = CATALOG.get("talker_pattern", "qwen-talker-{size}-base-{quant}.gguf")
 DEFAULT_CODEC = CATALOG.get("codec", "qwen-tokenizer-12hz-Q8_0.gguf")
+DEFAULT_REPOSITORY = "Serveurperso/Qwen3-TTS-GGUF"
 QUANT_ALIASES = {
     "q8": "Q8_0",
     "q8_0": "Q8_0",
@@ -82,6 +83,8 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "max_new_tokens": None,
     "codec_chunk_dur": None,
     "timeout": 300.0,
+    "auto_download": True,
+    "model_repository": DEFAULT_REPOSITORY,
 }
 ALLOWED_OPTIONS = frozenset(DEFAULT_OPTIONS)
 PER_REQUEST_OPTIONS = frozenset(
@@ -106,6 +109,34 @@ class QwenVoiceState:
     rvq: Path | None = None
     ref_text: Path | None = None
     source: Path | None = None
+
+
+def _download_model_file(path: Path, repository: str) -> None:
+    """Download one missing GGUF into ``path.parent`` from Hugging Face."""
+    if path.is_file() and path.stat().st_size > 0:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError as error:
+        raise FileNotFoundError(
+            f"Qwen3-TTS model file not found: {path}. Install huggingface_hub "
+            "or pre-download the GGUF."
+        ) from error
+    logger.info("Downloading Qwen GGUF %s from %s", path.name, repository)
+    try:
+        hf_hub_download(
+            repo_id=repository,
+            filename=path.name,
+            local_dir=str(path.parent),
+        )
+    except Exception as error:  # include upstream HF detail
+        raise FileNotFoundError(
+            f"Qwen3-TTS model file not found: {path}, and download from "
+            f"{repository} failed: {error}"
+        ) from error
+    if not path.is_file() or path.stat().st_size == 0:
+        raise FileNotFoundError(f"Qwen3-TTS download did not produce {path}")
 
 
 def _transcript_for(path: Path) -> Path | None:
@@ -481,9 +512,13 @@ class Qwen3TTSProvider(TTSProvider):
         }
 
     def load_model(self, options: dict[str, Any]) -> Qwen3TTSModel:
+        auto_download = bool(options.get("auto_download", True))
+        repository = str(options.get("model_repository") or DEFAULT_REPOSITORY)
         for key in ("talker", "codec"):
             path = Path(str(options[key]))
-            if not path.is_file():
+            if auto_download:
+                _download_model_file(path, repository)
+            elif not path.is_file():
                 raise FileNotFoundError(
                     f"Qwen3-TTS {key} file not found: {path}. Download the GGUFs "
                     "from Serveurperso/Qwen3-TTS-GGUF or set the provider option."

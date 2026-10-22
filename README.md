@@ -198,12 +198,14 @@ mounts:
 - `./models` → `/models` (Qwen GGUF, writable for first-run download)
 - the `tts-hf-cache` volume → `/cache/huggingface`
 
-The Qwen CUDA/Vulkan entrypoint downloads the GGUF files matching `TTS_MODEL`
-into `/models` if they are absent, then starts the app. The first boot
-therefore needs network access and takes longer. Existing files are reused.
-Override the source with `QWEN_GGUF_REPO`, or provide explicit comma-separated
-filenames with `QWEN_GGUF_FILES`; `QWEN_GGUF_QUANT` overrides the default
-quantization. Set `QWEN_GGUF_FILES` to preload additional aliases such as Q6.
+The Qwen provider downloads missing GGUF files for the requested alias
+(including 1.7B and Q4/Q5/Q6 variants) from
+`Serveurperso/Qwen3-TTS-GGUF` before loading it. The CUDA/Vulkan image
+entrypoint also preloads the `TTS_MODEL` files at startup. Both paths reuse
+existing files and need network access only when something is missing.
+Override the repository with `model_repository` / `QWEN_GGUF_REPO`, or provide
+explicit comma-separated filenames with `QWEN_GGUF_FILES`; `QWEN_GGUF_QUANT`
+overrides the default quantization.
 
 To preload the default 0.6B Q8 files instead of downloading at container start:
 
@@ -366,8 +368,11 @@ Point the provider at the shared library and model files:
 Supported options are `talker`, `codec`, `models_dir`, `native_library`,
 `backend` (`auto`, `native`, `cli`), `use_fa`, `clamp_fp16`, `max_batch`,
 `binary`, `codec_binary`, `device`, `language`, `seed`, `temperature`, `top_k`,
-`top_p`, `repetition_penalty`, `max_new_tokens`, `codec_chunk_dur`, and
-`timeout`. With `backend: "auto"`, setting `native_library` selects the shared
+`top_p`, `repetition_penalty`, `max_new_tokens`, `codec_chunk_dur`, `timeout`,
+`auto_download`, and `model_repository`. Missing GGUF files for any Qwen alias
+are downloaded from `model_repository` when the model is loaded; set
+`auto_download: false` to require preloaded files. With `backend: "auto"`,
+setting `native_library` selects the shared
 library; without it the provider falls back to the `qwen-tts` subprocess. If
 the sibling GGML libraries are not on the loader path, set
 `LD_LIBRARY_PATH=/path/to/qwentts.cpp/build-shared`.
