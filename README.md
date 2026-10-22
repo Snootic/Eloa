@@ -133,25 +133,26 @@ voice list.
 
 Four images cover the execution backends:
 
-| Environment file | Image contents | Host port |
+| Compose file | Image contents | Host port |
 |---|---|---:|
-| `compose.cpu.yaml` | Pocket TTS + Kokoro, torch CPU | 8082 |
+| `compose.yaml` | Pocket TTS + Kokoro, torch CPU (default) | 8082 |
 | `compose.openvino.yaml` | Chatterbox-Turbo ONNX, OpenVINO, Intel GPU runtime | 8083 |
 | `compose.vulkan.yaml` | Qwen3-TTS via qwentts.cpp built with Vulkan | 8084 |
 | `compose.cuda.yaml` | Qwen3-TTS via qwentts.cpp built with CUDA | 8085 |
 
-`compose.yaml` holds the shared project name, external `local` network, and
-cache volume. The environment files extend the common service template in
-`compose.base.yaml`. Merge the shared file with one environment file:
+Each environment file is self-contained: it declares its own project name,
+external `local` network, and cache volume, and extends the common service
+template in `compose.base.yaml`. Run one file directly:
 
 ```sh
-docker compose -f compose.yaml -f compose.cpu.yaml up --build
-docker compose -f compose.yaml -f compose.openvino.yaml up --build
-docker compose -f compose.yaml -f compose.vulkan.yaml up --build
-docker compose -f compose.yaml -f compose.cuda.yaml up --build
+docker compose -f compose.yaml up --build
+docker compose -f compose.openvino.yaml up --build
+docker compose -f compose.vulkan.yaml up --build
+docker compose -f compose.cuda.yaml up --build
 ```
 
-Use `-f compose.yaml -f compose.<env>.yaml down` to stop that environment.
+Use the same single file for `down`/`logs`. Dockhand can point at
+`compose.cuda.yaml` (or another environment file) directly.
 
 All images use the same configurable entrypoint:
 

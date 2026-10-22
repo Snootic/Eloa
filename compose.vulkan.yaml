@@ -1,3 +1,5 @@
+name: Eloa
+
 services:
   vulkan:
     extends:
@@ -22,3 +24,10 @@ services:
       TTS_MAX_CACHED_MODELS: "1"
       TTS_PROVIDER_OPTIONS_FILE: /app/config/providers.json
       TTS_PROVIDER_OPTIONS: '{"qwen3-tts":{"device":"Vulkan0"}}'
+
+networks:
+  local:
+    external: true
+
+volumes:
+  tts-hf-cache:

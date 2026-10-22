@@ -1,10 +1,19 @@
 name: Eloa
 
-# Shared top-level resources. Environment files extend compose.base.yaml:
-#   docker compose -f compose.yaml -f compose.cpu.yaml up --build
-#   docker compose -f compose.yaml -f compose.openvino.yaml up --build
-#   docker compose -f compose.yaml -f compose.vulkan.yaml up --build
-#   docker compose -f compose.yaml -f compose.cuda.yaml up --build
+services:
+  cpu:
+    extends:
+      file: compose.base.yaml
+      service: base
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.cpu
+    ports:
+      - "8082:8082"
+    environment:
+      TTS_PROVIDER: pocket-tts
+      TTS_MODEL: portuguese
+      TTS_VOICE: eloa
 
 networks:
   local:

@@ -1,3 +1,5 @@
+name: Eloa
+
 services:
   cuda:
     extends:
@@ -24,3 +26,10 @@ services:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
     shm_size: "2gb"
+
+networks:
+  local:
+    external: true
+
+volumes:
+  tts-hf-cache:
