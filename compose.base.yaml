@@ -5,6 +5,7 @@ x-hf: &hf
 services:
   base:
     restart: unless-stopped
+    container_name: Eloa
     networks:
       - local
     volumes:

@@ -1,4 +1,4 @@
-name: pocket-tts
+name: Eloa
 
 # Shared top-level resources. Environment files extend compose.base.yaml:
 #   docker compose -f compose.yaml -f compose.cpu.yaml up --build
