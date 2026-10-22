@@ -9,7 +9,7 @@ services:
     networks:
       - local
     volumes:
-      - ./voices:/app/voices:ro,z
+      - ./voices:/app/voices:z
       - tts-hf-cache:/cache/huggingface
     environment:
       <<: *hf

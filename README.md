@@ -198,7 +198,10 @@ mounts:
 - `./models` → `/models` (Qwen GGUF, writable for first-run download)
 - the `tts-hf-cache` volume → `/cache/huggingface`
 
-The Qwen provider downloads missing GGUF files for the requested alias
+The CUDA/Vulkan images bundle the Eloa voice files and the entrypoint copies
+any missing ones into the mounted `/app/voices` directory, so an empty
+`./voices` mount still has `eloa.spk`. The Qwen provider downloads missing GGUF
+files for the requested alias
 (including 1.7B and Q4/Q5/Q6 variants) from
 `Serveurperso/Qwen3-TTS-GGUF` before loading it. The CUDA/Vulkan image
 entrypoint also preloads the `TTS_MODEL` files at startup. Both paths reuse

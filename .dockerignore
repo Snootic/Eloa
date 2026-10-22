@@ -6,7 +6,16 @@ __pycache__
 .ruff_cache
 .pytest_cache
 benchmarks
-voices
+voices/*
+!voices/eloa.wav
+!voices/eloa.safetensors
+!voices/eloa.lab
+!voices/eloa.txt
+!voices/eloa.spk
+!voices/eloa.rvq
+!voices/eloa.gguf
+!voices/eloa-ptbr.gguf
+!voices/eloa-turbo.gguf
 models
 *.wav
 *.mp3

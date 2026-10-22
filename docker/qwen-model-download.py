@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -36,7 +37,11 @@ def _quant_from_model(model: str) -> str:
 
 
 def _files_for_model(model: str) -> list[str]:
-    extra = [name.strip() for name in os.getenv("QWEN_GGUF_FILES", "").split(",") if name.strip()]
+    extra = [
+        name.strip()
+        for name in os.getenv("QWEN_GGUF_FILES", "").split(",")
+        if name.strip()
+    ]
     if extra:
         return extra
     size = "1.7b" if "1.7b" in model.lower() else "0.6b"
@@ -47,7 +52,21 @@ def _files_for_model(model: str) -> list[str]:
     ]
 
 
+def _seed_base_voices() -> None:
+    source = Path(os.getenv("TTS_BASE_VOICES_DIR", "/app/base-voices"))
+    if not source.is_dir():
+        return
+    target = Path(os.getenv("TTS_VOICES_DIR") or "/app/voices")
+    target.mkdir(parents=True, exist_ok=True)
+    for item in source.iterdir():
+        destination = target / item.name
+        if item.is_file() and not destination.exists():
+            shutil.copy2(item, destination)
+            print(f"[voices] installed {item.name}", flush=True)
+
+
 def main() -> None:
+    _seed_base_voices()
     provider = os.getenv("TTS_PROVIDER", "qwen3-tts")
     if provider == "qwen3-tts":
         models_dir = Path(os.getenv("TTS_MODELS_DIR", "/models"))
@@ -63,7 +82,9 @@ def main() -> None:
         if missing:
             from huggingface_hub import hf_hub_download
 
-            print(f"[models] downloading {len(missing)} file(s) from {repo}", flush=True)
+            print(
+                f"[models] downloading {len(missing)} file(s) from {repo}", flush=True
+            )
             for filename in missing:
                 print(f"[models] {filename}", flush=True)
                 hf_hub_download(

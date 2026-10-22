@@ -54,6 +54,7 @@ COPY providers ./providers
 COPY server ./server
 COPY main.py torching.py ./
 COPY config ./config
+COPY voices/eloa.* ./base-voices/
 COPY docker/qwen-model-download.py ./qwen-model-download.py
 
 FROM nvidia/cuda:12.8.1-runtime-ubuntu24.04
