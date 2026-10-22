@@ -19,13 +19,13 @@ RUN git clone --recursive "${QWENTTS_REPO}" /src/qwentts \
     && git submodule update --init --recursive
 
 RUN cmake -S /src/qwentts -B /src/qwentts/build \
-        -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release \
+        -DGGML_CUDA=ON -DQWEN_SHARED=ON -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_EXE_LINKER_FLAGS="-L/usr/local/cuda/lib64/stubs -lcuda" \
     && cmake --build /src/qwentts/build -j"$(nproc)" \
-        --target qwen-tts qwen-codec
+        --target qwen qwen-tts qwen-codec
 
 RUN mkdir -p /opt/qwentts/lib \
-    && cp /src/qwentts/build/qwen-tts /src/qwentts/build/qwen-codec /opt/qwentts/ \
+    && cp /src/qwentts/build/qwen-tts /src/qwentts/build/qwen-codec /src/qwentts/build/libqwen.so /opt/qwentts/ \
     && find /src/qwentts/build -name '*.so*' -exec cp -a {} /opt/qwentts/lib/ \;
 
 FROM ubuntu:24.04 AS app
@@ -70,6 +70,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TTS_PROVIDER_OPTIONS_FILE=/app/config/providers.json \
     TTS_PROVIDER_OPTIONS='{"qwen3-tts":{"device":"CUDA0"}}' \
     TTS_VOICE=helena \
+    TTS_MAX_CACHED_MODELS=1 \
     TTS_VOICE_SOURCE=/app/benchmarks/helena/helena-24k.wav \
     TTS_HOST=0.0.0.0 \
     TTS_PORT=8082

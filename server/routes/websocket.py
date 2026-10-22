@@ -1,4 +1,5 @@
 import asyncio
+import os
 from collections.abc import Iterator
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -18,6 +19,15 @@ def next_chunk(chunks: Iterator[bytes]):
 
 @router.websocket("/v1/audio/speech/stream")
 async def speech_stream(websocket: WebSocket):
+    api_token = os.getenv("TTS_API_TOKEN", "")
+    if api_token:
+        token = websocket.query_params.get("token") or ""
+        header = websocket.headers.get("authorization") or ""
+        if token != api_token and header != f"Bearer {api_token}":
+            await websocket.accept()
+            await websocket.send_json({"type": "error", "message": "unauthorized"})
+            await websocket.close(code=4401)
+            return
     await websocket.accept()
 
     engine: TTSEngine = websocket.app.state.engine

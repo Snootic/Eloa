@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 # initializes while the Intel GPU is still visible.
 _BUILTINS = (
     ("providers.qwen3_tts", "Qwen3TTSProvider"),
+    ("providers.chatterbox_gguf", "ChatterboxGGUFProvider"),
     ("providers.neutts", "NeutTSProvider"),
     ("providers.chatterbox_onnx", "ChatterboxONNXProvider"),
     ("providers.fish_s1_mini", "FishS1MiniProvider"),

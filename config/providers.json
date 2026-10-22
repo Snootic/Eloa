@@ -3,6 +3,8 @@
     "models_dir": "/models",
     "binary": "/opt/qwentts/qwen-tts",
     "codec_binary": "/opt/qwentts/qwen-codec",
-    "codec_chunk_dur": 4
+    "codec_chunk_dur": 4,
+    "native_library": "/opt/qwentts/libqwen.so",
+    "backend": "native"
   }
 }

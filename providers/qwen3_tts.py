@@ -1,11 +1,12 @@
 """Qwen3-TTS 0.6B/1.7B through qwentts.cpp (GGML, Vulkan/CUDA/CPU).
 
-The model runs in the external ``qwen-tts`` binary; this provider keeps the
-engine contract native by invoking it with ``-o -`` and decoding the WAV that
-it writes to stdout. Reference voices are converted to 24 kHz with ffmpeg and
-encoded once with ``qwen-codec``. When a transcript sidecar is available the
-provider uses ICL (``.spk`` + ``.rvq`` + ``.txt``), which preserves the
-speaker; without one it falls back to x-vector-only conditioning.
+The native backend loads ``libqwen.so`` through ctypes and keeps the model
+resident across requests when ``native_library`` is configured. The
+``qwen-tts`` subprocess remains available with ``backend: "cli"``; reference
+voices are converted to 24 kHz with ffmpeg and encoded once with
+``qwen-codec``. When a transcript sidecar is available the provider uses ICL
+(``.spk`` + ``.rvq`` + ``.txt``), which preserves the speaker; without one it
+falls back to x-vector-only conditioning.
 """
 
 import hashlib
@@ -63,6 +64,11 @@ QUANT_ALIASES = {
 DEFAULT_OPTIONS: dict[str, Any] = {
     "talker": None,
     "models_dir": None,
+    "native_library": None,
+    "backend": "auto",
+    "use_fa": True,
+    "clamp_fp16": False,
+    "max_batch": 1,
     "codec": None,
     "binary": None,
     "codec_binary": None,
@@ -87,7 +93,6 @@ PER_REQUEST_OPTIONS = frozenset(
         "top_p",
         "repetition_penalty",
         "max_new_tokens",
-        "codec_chunk_dur",
         "timeout",
     }
 )
@@ -133,11 +138,33 @@ class Qwen3TTSModel(SynthesisModel):
         self._options = dict(options)
         self._talker = Path(options["talker"])
         self._codec = Path(options["codec"])
-        self._binary = _resolve_executable(str(options["binary"]), "qwen-tts")
+        self._device = str(options["device"])
+        self._backend = str(options.get("backend") or "auto")
+        self._native = None
+        native_library = options.get("native_library")
+        if self._backend in ("auto", "native") and native_library:
+            from providers.qwen3_native import QwenNativeBackend
+
+            self._native = QwenNativeBackend(
+                native_library,
+                self._talker,
+                self._codec,
+                device=self._device,
+                use_fa=bool(options.get("use_fa", True)),
+                clamp_fp16=bool(options.get("clamp_fp16", False)),
+                max_batch=int(options.get("max_batch", 1)),
+                codec_chunk_sec=float(options.get("codec_chunk_dur") or 4.0),
+            )
+            self._binary = None
+        elif self._backend == "native":
+            raise FileNotFoundError(
+                "Qwen native backend requested but native_library is not set"
+            )
+        else:
+            self._binary = _resolve_executable(str(options["binary"]), "qwen-tts")
         self._codec_binary = _resolve_executable(
             str(options["codec_binary"]), "qwen-codec"
         )
-        self._device = str(options["device"])
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -322,6 +349,10 @@ class Qwen3TTSModel(SynthesisModel):
                 voice.source, destination.with_suffix(f".ref{voice.source.suffix}")
             )
 
+    def close(self) -> None:
+        if self._native is not None:
+            self._native.close()
+
     def synthesize(
         self,
         voice: QwenVoiceState,
@@ -330,6 +361,15 @@ class Qwen3TTSModel(SynthesisModel):
         options: Mapping[str, Any] | None = None,
     ) -> Iterator[AudioChunk]:
         opts = {**self._options, **(options or {})}
+        if self._native is not None:
+            yield from self._native.synthesize(
+                text,
+                voice.spk,
+                voice.rvq,
+                voice.ref_text,
+                options=opts,
+            )
+            return
         command = [
             str(self._binary),
             "--model",
@@ -402,6 +442,10 @@ class Qwen3TTSProvider(TTSProvider):
         if unknown:
             raise ValueError(f"Unknown qwen3-tts options: {', '.join(unknown)}")
         resolved = {**DEFAULT_OPTIONS, **options}
+        backend = str(resolved.get("backend") or "auto").lower()
+        if backend not in {"auto", "native", "cli"}:
+            raise ValueError("qwen3-tts backend must be one of: auto, native, cli")
+        resolved["backend"] = backend
         spec = self._model_spec(model)
         models = Path(
             str(resolved["models_dir"] or CATALOG.get("models_dir", "models"))
@@ -444,6 +488,18 @@ class Qwen3TTSProvider(TTSProvider):
                     f"Qwen3-TTS {key} file not found: {path}. Download the GGUFs "
                     "from Serveurperso/Qwen3-TTS-GGUF or set the provider option."
                 )
-        _resolve_executable(str(options["binary"]), "qwen-tts")
+        backend = str(options.get("backend") or "auto")
+        native_library = options.get("native_library")
+        if backend != "cli" and native_library:
+            if not Path(str(native_library)).is_file():
+                raise FileNotFoundError(
+                    f"Qwen native library not found: {native_library}"
+                )
+        elif backend == "native":
+            raise FileNotFoundError(
+                "Qwen native backend requested but native_library is not set"
+            )
+        else:
+            _resolve_executable(str(options["binary"]), "qwen-tts")
         _resolve_executable(str(options["codec_binary"]), "qwen-codec")
         return Qwen3TTSModel(options)

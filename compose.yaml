@@ -72,6 +72,7 @@ services:
       TTS_VOICE: helena
       TTS_VOICE_SOURCE: /app/benchmarks/helena/helena-24k.wav
       TTS_MODEL_CATALOG: /app/config/models.json
+      TTS_MAX_CACHED_MODELS: "1"
       TTS_PROVIDER_OPTIONS_FILE: /app/config/providers.json
       TTS_PROVIDER_OPTIONS: '{"qwen3-tts":{"device":"Vulkan0"}}'
     restart: unless-stopped
@@ -99,6 +100,7 @@ services:
       TTS_VOICE: helena
       TTS_VOICE_SOURCE: /app/benchmarks/helena/helena-24k.wav
       TTS_MODEL_CATALOG: /app/config/models.json
+      TTS_MAX_CACHED_MODELS: "1"
       TTS_PROVIDER_OPTIONS_FILE: /app/config/providers.json
       TTS_PROVIDER_OPTIONS: '{"qwen3-tts":{"device":"CUDA0"}}'
       NVIDIA_VISIBLE_DEVICES: all

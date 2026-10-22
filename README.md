@@ -19,6 +19,8 @@ providers/             officially supported providers
   kokoro.py            Kokoro-82M, CPU-first with built-in voices
   neutts.py            NeuTTS Air/Nano (optional neutts package)
   qwen3_tts.py         Qwen3-TTS via qwentts.cpp (Vulkan/CUDA/CPU)
+  qwen3_native.py      ctypes binding to the shared qwentts.cpp C ABI
+  chatterbox_gguf.py   Chatterbox Multilingual via codec.cpp GGUF
   fish_s1_mini/        FishAudio S1-mini adapter + vendored inference code
   chatterbox.py        Chatterbox / Chatterbox-Turbo (optional package)
   f5_tts.py            F5-TTS (optional package)
@@ -65,9 +67,15 @@ assuming 24 kHz.
 model alias selects the GGUF without editing talker/codec paths:
 
 ```sh
-./run_qwen_vulkan.sh
-# persistent user service
-systemctl --user enable --now qwen-tts.service
+# test deployment: detached background process, no service manager
+setsid nohup ./run_qwen_vulkan.sh > /tmp/qwen-tts.log 2>&1 < /dev/null &
+```
+
+Restart after source changes:
+
+```sh
+kill "$(ss -ltnp | sed -n 's/.*:8084 .*pid=\([0-9]*\).*/\1/p')"
+setsid nohup ./run_qwen_vulkan.sh > /tmp/qwen-tts.log 2>&1 < /dev/null &
 ```
 
 `TTS_PROVIDER_OPTIONS` keeps those paths under `qwen3-tts`; other providers
@@ -193,8 +201,9 @@ The OpenVINO profile defaults to `chatterbox-turbo-ov` with
 `voices/ad-women.wav`; set `TTS_PROVIDER=fish-s1-mini` etc. to use another
 installed provider. Fish is gated and needs `HF_TOKEN`.
 
-The Qwen images build `qwentts.cpp` at commit `5916bf7`. The Vulkan profile
-uses `Vulkan0`; CUDA uses `CUDA0`. The images read model aliases from
+The Qwen images build `qwentts.cpp` at commit `5916bf7` with
+`-DQWEN_SHARED=ON` and load `libqwen.so` natively. The Vulkan profile uses
+`Vulkan0`; CUDA uses `CUDA0`. The images read model aliases from
 `/app/config/models.json` and provider defaults from `/app/config/providers.json`,
 so changing `TTS_MODEL` (for example to `qwen3-tts-0.6b-q6`) or the request
 `model` switches quantizations without editing binary/model paths. Q4_K_M is
@@ -296,11 +305,14 @@ port through GGML, so no PyTorch or OpenVINO model runs at request time. The
 0.6B Base model clones a voice from a reference clip; its 1024-dim speaker
 embedding is extracted once and cached as a `.spk` file.
 
-Build the engine and fetch the two GGUFs:
+Build the engine, shared library, and CLI tools, then fetch the two GGUFs:
 
 ```sh
 git clone --recurse-submodules https://github.com/ServeurpersoCom/qwentts.cpp
-cd qwentts.cpp && ./buildvulkan.sh   # or buildsycl.sh / buildcuda.sh / buildcpu.sh
+cd qwentts.cpp
+cmake -S . -B build-shared -DGGML_VULKAN=ON -DQWEN_SHARED=ON \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build-shared -j"$(nproc)" --target qwen qwen-tts qwen-codec
 
 mkdir -p models
 hf download Serveurperso/Qwen3-TTS-GGUF \
@@ -308,7 +320,12 @@ hf download Serveurperso/Qwen3-TTS-GGUF \
   qwen-tokenizer-12hz-Q8_0.gguf --local-dir models
 ```
 
-Point the provider at both binaries and the model files:
+Use `-DGGML_CUDA=ON` for CUDA or `-DGGML_VULKAN=OFF` for CPU. The recommended
+runtime loads `build-shared/libqwen.so` in-process and keeps the model resident.
+The CLI binaries remain the fallback and are still used by `qwen-codec` to
+encode new reference voices.
+
+Point the provider at the shared library and model files:
 
 ```json
 {
@@ -319,6 +336,8 @@ Point the provider at both binaries and the model files:
   "options": {
     "talker": "/path/to/qwen-talker-0.6b-base-Q8_0.gguf",
     "codec": "/path/to/qwen-tokenizer-12hz-Q8_0.gguf",
+    "native_library": "/path/to/qwentts.cpp/build-shared/libqwen.so",
+    "backend": "native",
     "binary": "/path/to/qwentts.cpp/build/qwen-tts",
     "codec_binary": "/path/to/qwentts.cpp/build/qwen-codec",
     "device": "Vulkan0",
@@ -327,11 +346,16 @@ Point the provider at both binaries and the model files:
 }
 ```
 
-Supported options are `talker`, `codec`, `binary`, `codec_binary`, `device`,
-`language`, `seed`, `temperature`, `top_k`, `top_p`, `repetition_penalty`,
-`max_new_tokens`, `codec_chunk_dur`, and `timeout`. `language` defaults to
-`auto`; the engine supports Chinese, English, Japanese, Korean, German, French,
-Russian, Portuguese, Spanish, and Italian.
+Supported options are `talker`, `codec`, `models_dir`, `native_library`,
+`backend` (`auto`, `native`, `cli`), `use_fa`, `clamp_fp16`, `max_batch`,
+`binary`, `codec_binary`, `device`, `language`, `seed`, `temperature`, `top_k`,
+`top_p`, `repetition_penalty`, `max_new_tokens`, `codec_chunk_dur`, and
+`timeout`. With `backend: "auto"`, setting `native_library` selects the shared
+library; without it the provider falls back to the `qwen-tts` subprocess. If
+the sibling GGML libraries are not on the loader path, set
+`LD_LIBRARY_PATH=/path/to/qwentts.cpp/build-shared`.
+`language` defaults to `auto`; the engine supports Chinese, English, Japanese,
+Korean, German, French, Russian, Portuguese, Spanish, and Italian.
 
 Reference clips can be any audio format: the provider resamples them to 24 kHz
 with ffmpeg, runs `qwen-codec`, and caches the `.spk` embedding plus `.rvq`
@@ -353,21 +377,33 @@ pt-BR mode. ICL conditions on the reference and transcript, which is the best
 available lever for Brazilian accent, but the model cannot guarantee pt-BR
 phonology; judge that by listening.
 
-Measured here with the 0.6B Q8 model on an Arc B580: **5.3× realtime warm**
-(13.0 s audio in 2.5 s), and **2.2× end-to-end through the provider** for a
-6.3 s sentence including process and model startup. OpenVINO GenAI also has a
-Qwen3-TTS pipeline, but it measured 0.5–0.8× on the same GPU, so it is not the
-provider used here.
+Measured here with the 0.6B Q8 native backend on an Arc B580: the first
+request after model load reaches the first audio chunk in **0.25 s** and
+synthesizes 3.9 s of audio in **1.04 s**; a warm request on the resident handle
+reaches first audio in **0.055 s** and finishes in **0.82 s** (about **4.8×
+realtime**). The subprocess fallback starts a fresh engine per request and is
+substantially slower. OpenVINO GenAI also has a Qwen3-TTS pipeline, but it
+measured 0.5–0.8× on the same GPU, so it is not the provider used here.
 
 On the 12.8 GB card, 0.6B Q8 peaks at **2.2 GB** for a 13 s request and
 **3.3 GB** for 80 s with `codec_chunk_dur: 4` (5.2 GB at the default 24 s).
 1.7B Q8 peaks at **3.3 GB** for 12 s and **4.4 GB** for 80 s. Four concurrent
 0.6B short requests fit (12.66 GB total); with `codec_chunk_dur: 4`, three
 concurrent long 0.6B requests also fit (10.80 GB total). The 1.7B fits three
-short or two long requests. These concurrency figures come from separate
-processes — the engine serializes generation per model key.
+short or two long requests. Those figures were measured with separate CLI
+processes; the native backend keeps one resident context per model key and
+serializes generation through it, so treat them as process-level upper bounds
+rather than native concurrency limits.
 
 ### Quantization
+
+The native context keeps the model and its KV cache resident. A 0.6B Q8
+context allocates about 2.08 GB at load and 2.30 GB after synthesis; switching
+to Q6 and back reloads the context. Keep `TTS_MAX_CACHED_MODELS=1` for Qwen
+(the workstation script and Vulkan/CUDA images set it): caching two native
+quantizations simultaneously costs about 4.3 GB, because each has its own
+weights and KV cache. The old CLI fallback did not retain the previous
+quantization and therefore peaked lower.
 
 Any GGUF quantization works by pointing `talker` and `codec` at the matching
 files; no separate engine path is needed. Measured with this runtime:
@@ -450,6 +486,86 @@ without changing throughput.
 License: the weights are CC-BY-NC-SA-4.0 and the vendored fish-speech code is
 under the Fish Audio Research License. Research and non-commercial use only;
 commercial use requires a separate license from Fish Audio.
+
+## Chatterbox Multilingual GGUF (native)
+
+`provider: "chatterbox-gguf"` loads the [BricksDisplay Chatterbox
+Multilingual GGUFs](https://huggingface.co/BricksDisplay/Chatterbox-Multilingual-TTS-GGUF)
+through [codec.cpp](https://github.com/mybigday/codec.cpp). The Python binding
+keeps the T3 backbone and codec resident in-process; the codec runs on the
+same GGUF backends as the Qwen provider (Vulkan, CUDA, or CPU).
+
+Build codec.cpp with shared libraries, then fetch the Q8 or F16 pair:
+
+```sh
+git clone --recursive https://github.com/mybigday/codec.cpp
+cd codec.cpp
+cmake -S . -B build -DBUILD_SHARED_LIBS=ON -DCODEC_TTS_SERVER=OFF \
+  -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release       # or -DGGML_VULKAN=ON
+cmake --build build -j --target codec_shared ttsbackbone
+
+cd ..
+hf download BricksDisplay/Chatterbox-Multilingual-TTS-GGUF \
+  chatterbox-mtl-q8_0.gguf codec-q8_0.gguf --local-dir models/chatterbox
+```
+
+Provider options:
+
+```json
+{
+  "models_dir": "/path/to/models/chatterbox",
+  "quant": "q8_0",
+  "use_gpu": true,
+  "language": "pt",
+  "segment_bytes": 100,
+  "emotion": 0.5,
+  "flow_steps": 4,
+  "python_path": "/path/to/codec.cpp/python",
+  "library": "/path/to/codec.cpp/build/libcodec.so",
+  "backbone_library": "/path/to/codec.cpp/build/ttsbackbone/libttsbackbone.so"
+}
+```
+
+Aliases are `chatterbox-mtl`, `chatterbox-mtl-q8_0`, `chatterbox-mtl-q4_k_m`,
+and `chatterbox-mtl-f16`. Use `chatterbox-mtl-f16` for the full model.
+Reference voices are saved as `voices/<name>.gguf`; `POST
+/v1/audio/voices/clone` works with the same provider.
+
+`segment_bytes` controls the latency/quality tradeoff: Chatterbox emits a
+finished segment at a time and has no intra-segment streaming. `emotion` maps
+to Chatterbox's `emotion_adv` scalar (0–1.5); changing it reloads the model.
+`flow_steps` lowers decoder cost (6 is the model default, 4 is a good
+tradeoff).
+
+Measured on Arc B580 Vulkan, Helena voice, Portuguese 9.4 s text, 4 flow
+steps:
+
+| Model | First audio | Total | Audio | Peak VRAM |
+|---|---:|---:|---:|---:|
+| Q8, whole utterance | 2.44 s | 2.44 s | 9.4 s | 1.26 GB |
+| Q8, `segment_bytes=100` | **1.11 s** | 3.55 s | 9.7 s | 1.26 GB |
+| F16, whole utterance | 2.74 s | 2.74 s | 9.4 s | **1.72 GB** |
+| F16, `segment_bytes=100` | 1.20 s | 3.86 s | 9.2 s | 1.72 GB |
+
+The first F16 request after loading can be ~3.7 s while shaders warm. On a
+GTX 1650 D6 (4 GB, 192 GB/s, 896 CUDA cores) expect roughly **2–3× the B580
+times before CUDA-specific gains**: about 4–8 s for the Q8 9.4 s utterance
+and 2–4 s TTFA with `segment_bytes=100`. Q8's 1.26 GB and F16's 1.72 GB both
+fit in 4 GB, but leave limited headroom for the desktop. Prefer Q8 on a 4 GB
+card; use the CUDA build.
+
+`tts-server`/the built-in Qwen path remain faster and stream earlier; the
+Chatterbox native path is for emotion, expressiveness, and its cloning voice.
+
+Emotion presets (sad, neutral, happy, enthusiastic, angry) are benchmarked
+in [`benchmarks/chatterbox-emotions/results.md`](benchmarks/chatterbox-emotions/results.md),
+including generated audio and Q8/F16 VRAM numbers.
+
+The Brazilian-Portuguese fine-tune (`ResembleAI/Chatterbox-Multilingual-pt-br`)
+was converted to GGUF and benchmarked in
+[`benchmarks/chatterbox-emotions/controlled/ptbr-results.md`](benchmarks/chatterbox-emotions/controlled/ptbr-results.md).
+Its local service is `run_chatterbox_ptbr_vulkan.sh` on port 8087; the
+generic multilingual service remains on 8086.
 
 ## Optional providers: Chatterbox and F5-TTS
 
