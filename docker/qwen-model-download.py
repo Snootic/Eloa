@@ -38,9 +38,9 @@ def _truthy(name: str) -> bool:
 def _quant_from_model(model: str) -> str:
     match = re.search(r"-(q[0-9](?:_[a-z0-9]+)*|bf16|f32)$", model.lower())
     if match:
-        return QUANT_NAMES.get(match.group(1), "BF16")
+        return QUANT_NAMES.get(match.group(1), "Q8_0")
     explicit = os.getenv("QWEN_GGUF_QUANT", "").lower()
-    return QUANT_NAMES.get(explicit, "BF16")
+    return QUANT_NAMES.get(explicit, "Q8_0")
 
 
 def _files_for_model(model: str) -> list[str]:

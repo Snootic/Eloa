@@ -36,13 +36,13 @@ CACHE_DIR = Path(tempfile.gettempdir()) / "pocket-tts-qwen3"
 CATALOG = load_model_catalog().get("qwen3-tts", {})
 CATALOG_MODELS = CATALOG.get("models", {})
 FALLBACK_MODELS = {
-    "qwen3-tts-0.6b": {"size": "0.6b", "quant": "BF16", "codec": "BF16"},
+    "qwen3-tts-0.6b": {"size": "0.6b", "quant": "Q8_0", "codec": "Q8_0"},
     "qwen3-tts-0.6b-bf16": {"size": "0.6b", "quant": "BF16", "codec": "BF16"},
     "qwen3-tts-0.6b-q8": {"size": "0.6b", "quant": "Q8_0", "codec": "Q8_0"},
     "qwen3-tts-0.6b-q6": {"size": "0.6b", "quant": "Q6_K", "codec": "Q8_0"},
     "qwen3-tts-0.6b-q5": {"size": "0.6b", "quant": "Q5_K_M", "codec": "Q8_0"},
     "qwen3-tts-0.6b-q4": {"size": "0.6b", "quant": "Q4_K_M", "codec": "Q8_0"},
-    "qwen3-tts-1.7b": {"size": "1.7b", "quant": "BF16", "codec": "BF16"},
+    "qwen3-tts-1.7b": {"size": "1.7b", "quant": "Q8_0", "codec": "Q8_0"},
     "qwen3-tts-1.7b-bf16": {"size": "1.7b", "quant": "BF16", "codec": "BF16"},
     "qwen3-tts-1.7b-q8": {"size": "1.7b", "quant": "Q8_0", "codec": "Q8_0"},
     "qwen3-tts-1.7b-q6": {"size": "1.7b", "quant": "Q6_K", "codec": "Q8_0"},
