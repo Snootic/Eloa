@@ -52,7 +52,7 @@ RUN uv pip install --python /opt/venv/bin/python --torch-backend=cpu \
 COPY tts_core ./tts_core
 COPY providers ./providers
 COPY server ./server
-COPY main.py torching.py ./
+COPY main.py torching.py auth.py ./
 COPY config ./config
 COPY voices/eloa.* ./base-voices/
 COPY docker/qwen-model-download.py ./qwen-model-download.py

@@ -1,10 +1,10 @@
 import asyncio
-import os
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+import auth
 from server.routes.http import router as http_router
 from server.routes.websocket import router as websocket_router
 from tts_core.engine import TTSEngine
@@ -38,16 +38,14 @@ def create_http_server(engine: TTSEngine) -> FastAPI:
     )
     app.state.engine = engine
     app.state.engine_lock = asyncio.Lock()
-    api_token = os.getenv("TTS_API_TOKEN", "")
 
     @app.middleware("http")
     async def require_token(request: Request, call_next):
-        if (
-            api_token
-            and request.url.path.startswith("/v1/")
-            and request.headers.get("authorization") != f"Bearer {api_token}"
-        ):
-            return JSONResponse(status_code=401, content={"detail": "unauthorized"})
+        if request.url.path.startswith("/v1/"):
+            try:
+                auth.check(request.headers.get("authorization"))
+            except auth.AuthError:
+                return JSONResponse(status_code=401, content={"detail": "unauthorized"})
         return await call_next(request)
 
     async def unknown_provider(request: Request, error: Exception) -> JSONResponse:

@@ -16,6 +16,10 @@ services:
       TTS_MODEL_CATALOG: /app/config/models.json
       TTS_LAZY_LOAD: "1"
       TTS_MAX_LOADED_MODELS: "1"
+      AUTH_ISSUER: https://auth.coisas-mais-estranhas.com.br/realms/coisas
+      AUTH_JWKS_URL: http://keycloak:8080/realms/coisas/protocol/openid-connect/certs
+      AUTH_CLIENTS: gatekeeper,voice-llm,voice-client
+      AUTH_ALLOW_STATIC: "false"
     labels:
         #https://git.coisas-mais-estranhas.com.br/snootic/lab
       - "traefik.enable=true"

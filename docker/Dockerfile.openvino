@@ -28,7 +28,7 @@ RUN uv pip install --python /app-venv/bin/python --torch-backend=cpu \
 COPY tts_core ./tts_core
 COPY providers ./providers
 COPY server ./server
-COPY main.py torching.py ./
+COPY main.py torching.py auth.py ./
 COPY config ./config
 
 FROM ${OPENVINO_BASE}
