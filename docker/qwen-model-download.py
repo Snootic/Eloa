@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Download the GGUF files a Qwen3-TTS container needs, then exec the app.
+
+The CUDA/Vulkan images run this as their entrypoint. Existing files are left
+alone; the default repository is Serveurperso/Qwen3-TTS-GGUF. Override with
+QWEN_GGUF_REPO, QWEN_GGUF_FILES (comma-separated) or QWEN_GGUF_QUANT.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import sys
+from pathlib import Path
+
+DEFAULT_REPO = "Serveurperso/Qwen3-TTS-GGUF"
+DEFAULT_TOKENIZER = "qwen-tokenizer-12hz-Q8_0.gguf"
+QUANT_NAMES = {
+    "q8": "Q8_0",
+    "q8_0": "Q8_0",
+    "q6": "Q6_K",
+    "q6_k": "Q6_K",
+    "q5": "Q5_K_M",
+    "q5_k_m": "Q5_K_M",
+    "q4": "Q4_K_M",
+    "q4_k_m": "Q4_K_M",
+}
+
+
+def _quant_from_model(model: str) -> str:
+    match = re.search(r"-(q[0-9](?:_[a-z0-9]+)*)$", model.lower())
+    if match:
+        return QUANT_NAMES.get(match.group(1), "Q8_0")
+    explicit = os.getenv("QWEN_GGUF_QUANT", "").lower()
+    return QUANT_NAMES.get(explicit, "Q8_0")
+
+
+def _files_for_model(model: str) -> list[str]:
+    extra = [name.strip() for name in os.getenv("QWEN_GGUF_FILES", "").split(",") if name.strip()]
+    if extra:
+        return extra
+    size = "1.7b" if "1.7b" in model.lower() else "0.6b"
+    quant = _quant_from_model(model)
+    return [
+        f"qwen-talker-{size}-base-{quant}.gguf",
+        os.getenv("QWEN_TOKENIZER_GGUF", DEFAULT_TOKENIZER),
+    ]
+
+
+def main() -> None:
+    provider = os.getenv("TTS_PROVIDER", "qwen3-tts")
+    if provider == "qwen3-tts":
+        models_dir = Path(os.getenv("TTS_MODELS_DIR", "/models"))
+        models_dir.mkdir(parents=True, exist_ok=True)
+        repo = os.getenv("QWEN_GGUF_REPO", DEFAULT_REPO)
+        files = _files_for_model(os.getenv("TTS_MODEL", "qwen3-tts-0.6b"))
+        missing = [
+            filename
+            for filename in files
+            if not (models_dir / filename).is_file()
+            or (models_dir / filename).stat().st_size == 0
+        ]
+        if missing:
+            from huggingface_hub import hf_hub_download
+
+            print(f"[models] downloading {len(missing)} file(s) from {repo}", flush=True)
+            for filename in missing:
+                print(f"[models] {filename}", flush=True)
+                hf_hub_download(
+                    repo_id=repo,
+                    filename=filename,
+                    local_dir=str(models_dir),
+                )
+            print("[models] ready", flush=True)
+
+    argv = sys.argv[1:] or ["python", "main.py"]
+    os.execvp(argv[0], argv)
+
+
+if __name__ == "__main__":
+    main()

@@ -15,7 +15,7 @@ services:
       - label=disable
     gpus: all
     volumes:
-      - ./models:/models:ro,z
+      - ./models:/models:z
     environment:
       TTS_PROVIDER: qwen3-tts
       TTS_MODEL: qwen3-tts-0.6b

@@ -52,6 +52,7 @@ COPY providers ./providers
 COPY server ./server
 COPY main.py torching.py ./
 COPY config ./config
+COPY docker/qwen-model-download.py ./qwen-model-download.py
 
 FROM ubuntu:24.04
 
@@ -84,6 +85,7 @@ COPY --from=app /app /app
 COPY --from=qwen /opt/qwentts /opt/qwentts
 
 EXPOSE 8082
-HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
+HEALTHCHECK --interval=15s --timeout=5s --start-period=300s --retries=5 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/health')" || exit 1
+ENTRYPOINT ["python", "/app/qwen-model-download.py"]
 CMD ["python", "main.py"]

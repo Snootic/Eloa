@@ -195,10 +195,17 @@ Model weights are **not** baked into the images. The base Compose template
 mounts:
 
 - `./voices` → `/app/voices` (includes the shipped Eloa voice)
-- `./models` → `/models` (Qwen GGUF)
+- `./models` → `/models` (Qwen GGUF, writable for first-run download)
 - the `tts-hf-cache` volume → `/cache/huggingface`
 
-For the Qwen environments, download the 0.6B Q8 files:
+The Qwen CUDA/Vulkan entrypoint downloads the GGUF files matching `TTS_MODEL`
+into `/models` if they are absent, then starts the app. The first boot
+therefore needs network access and takes longer. Existing files are reused.
+Override the source with `QWEN_GGUF_REPO`, or provide explicit comma-separated
+filenames with `QWEN_GGUF_FILES`; `QWEN_GGUF_QUANT` overrides the default
+quantization. Set `QWEN_GGUF_FILES` to preload additional aliases such as Q6.
+
+To preload the default 0.6B Q8 files instead of downloading at container start:
 
 ```sh
 mkdir -p models
