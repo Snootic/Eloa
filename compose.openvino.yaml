@@ -16,6 +16,5 @@ services:
     environment:
       TTS_PROVIDER: chatterbox-turbo-ov
       TTS_MODEL: chatterbox-turbo
-      TTS_VOICE: ad-women
-      TTS_VOICE_SOURCE: /app/voices/ad-women.wav
+      TTS_VOICE: eloa
       TTS_OPTIONS: '{"device":"GPU"}'

@@ -42,7 +42,7 @@ Synthesis over HTTP:
 ```sh
 curl -X POST http://127.0.0.1:8082/v1/audio/speech \
   -H 'Content-Type: application/json' \
-  -d '{"model": "english", "voice": "camilly-english", "input": "Hello.", "response_format": "opus_24k"}' \
+  -d '{"model": "portuguese", "voice": "eloa", "input": "Hello.", "response_format": "opus_24k"}' \
   --output speech.ogg
 ```
 
@@ -111,7 +111,7 @@ Provider, model, and voice are drop-downs populated from
 `GET /v1/audio/providers`; the model list comes from each provider and the
 voice list from `voices/` plus the engine/provider default. Query parameters
 still prefill them, for example
-`test_http.html?provider=fish-s1-mini&model=s1-mini&voice=ad-women&text=Hello`.
+`test_http.html?provider=fish-s1-mini&model=s1-mini&voice=eloa&text=Hello`.
 
 Clone a voice from the command line:
 
@@ -120,7 +120,7 @@ curl -F name=my-voice \
   -F provider=fish-s1-mini \
   -F reference_text="The words spoken in the clip" \
   -F overwrite=false \
-  -F file=@voices/ad-women.wav \
+  -F file=@voices/eloa.wav \
   http://127.0.0.1:8082/v1/audio/voices/clone
 ```
 
@@ -159,7 +159,7 @@ All images use the same configurable entrypoint:
 |---|---|
 | `TTS_PROVIDER` | `pocket-tts` |
 | `TTS_MODEL` | `portuguese` |
-| `TTS_VOICE` | `camilly-portuguese` |
+| `TTS_VOICE` | `eloa` |
 | `TTS_VOICE_SOURCE` | unset |
 | `TTS_OPTIONS` | `{}` (JSON object, applied to every provider) |
 | `TTS_PROVIDER_OPTIONS` | `{}` (JSON map keyed by provider name) |
@@ -193,8 +193,7 @@ access.
 Model weights are **not** baked into the images. The base Compose template
 mounts:
 
-- `./voices` → `/app/voices`
-- `./benchmarks` → `/app/benchmarks` (Helena ICL reference)
+- `./voices` → `/app/voices` (includes the shipped Eloa voice)
 - `./models` → `/models` (Qwen GGUF)
 - the `tts-hf-cache` volume → `/cache/huggingface`
 
@@ -206,14 +205,10 @@ uvx --from huggingface_hub hf download Serveurperso/Qwen3-TTS-GGUF \
   qwen-talker-0.6b-base-Q8_0.gguf qwen-tokenizer-12hz-Q8_0.gguf --local-dir models
 ```
 
-The Vulkan/CUDA defaults use the Helena voice in
-`benchmarks/helena/helena-24k.wav` with its `.lab` transcript. If that folder
-is absent, set `TTS_VOICE_SOURCE` and `TTS_VOICE` to a reference clip you have
-(and provide its transcript), or send provider options per HTTP request.
-
-The OpenVINO environment defaults to `chatterbox-turbo-ov` with
-`voices/ad-women.wav`; set `TTS_PROVIDER=fish-s1-mini` etc. to use another
-installed provider. Fish is gated and needs `HF_TOKEN`.
+The Vulkan/CUDA environments use the shipped `voices/eloa.spk` Qwen voice.
+The OpenVINO environment uses `chatterbox-turbo-ov` with `voices/eloa.wav`.
+Set `TTS_PROVIDER=fish-s1-mini` etc. to use another installed provider. Fish
+is gated and needs `HF_TOKEN`.
 
 The Qwen images build `qwentts.cpp` at commit `5916bf7` with
 `-DQWEN_SHARED=ON` and load `libqwen.so` natively. The Vulkan environment uses
@@ -447,7 +442,7 @@ on first use into the Hugging Face cache (about 3.6 GB).
 {
   "provider": "fish-s1-mini",
   "model": "s1-mini",
-  "voice": "ad-women",
+  "voice": "eloa",
   "input": "Hello from FishAudio.",
   "options": {
     "quantize": "int8",

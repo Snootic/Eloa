@@ -66,7 +66,7 @@ def _provider_options() -> dict[str, dict[str, object]]:
 def main() -> None:
     provider = os.getenv("TTS_PROVIDER", "pocket-tts")
     model = os.getenv("TTS_MODEL", "portuguese")
-    voice = os.getenv("TTS_VOICE", "camilly-portuguese") or None
+    voice = os.getenv("TTS_VOICE", "eloa") or None
     source = os.getenv("TTS_VOICE_SOURCE") or None
 
     engine = TTSEngine(

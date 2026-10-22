@@ -11,4 +11,4 @@ services:
     environment:
       TTS_PROVIDER: pocket-tts
       TTS_MODEL: portuguese
-      TTS_VOICE: camilly-portuguese
+      TTS_VOICE: eloa

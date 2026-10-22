@@ -14,13 +14,11 @@ services:
     devices:
       - /dev/dri:/dev/dri
     volumes:
-      - ./benchmarks:/app/benchmarks:ro,z
       - ./models:/models:ro,z
     environment:
       TTS_PROVIDER: qwen3-tts
       TTS_MODEL: qwen3-tts-0.6b
-      TTS_VOICE: helena
-      TTS_VOICE_SOURCE: /app/benchmarks/helena/helena-24k.wav
+      TTS_VOICE: eloa
       TTS_MAX_CACHED_MODELS: "1"
       TTS_PROVIDER_OPTIONS_FILE: /app/config/providers.json
       TTS_PROVIDER_OPTIONS: '{"qwen3-tts":{"device":"Vulkan0"}}'

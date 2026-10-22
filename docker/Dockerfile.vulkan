@@ -67,9 +67,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TTS_MODEL_CATALOG=/app/config/models.json \
     TTS_PROVIDER_OPTIONS_FILE=/app/config/providers.json \
     TTS_PROVIDER_OPTIONS='{"qwen3-tts":{"device":"Vulkan0"}}' \
-    TTS_VOICE=helena \
+    TTS_VOICE=eloa \
     TTS_MAX_CACHED_MODELS=1 \
-    TTS_VOICE_SOURCE=/app/benchmarks/helena/helena-24k.wav \
     TTS_HOST=0.0.0.0 \
     TTS_PORT=8082
 
