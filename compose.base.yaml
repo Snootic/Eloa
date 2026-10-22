@@ -1,0 +1,28 @@
+x-hf: &hf
+  HF_HOME: /cache/huggingface
+  HF_TOKEN: ${HF_TOKEN:-}
+
+services:
+  base:
+    restart: unless-stopped
+    networks:
+      - local
+    volumes:
+      - ./voices:/app/voices:ro,z
+      - tts-hf-cache:/cache/huggingface
+    environment:
+      <<: *hf
+      TTS_MODEL_CATALOG: /app/config/models.json
+    labels:
+        #https://git.coisas-mais-estranhas.com.br/snootic/lab
+      - "traefik.enable=true"
+      - "traefik.http.routers.tts.rule=Host(`tts.coisas-mais-estranhas.com.br`)"
+      - "traefik.http.routers.tts.tls=true"
+      - "traefik.http.services.tts.loadbalancer.server.port=8082"
+      - "cloudflare.domain=coisas-mais-estranhas.com.br"
+      - "cloudflare.subdomain=tts"
+      - "cloudflare.type=CNAME"
+
+networks:
+  local:
+    external: true

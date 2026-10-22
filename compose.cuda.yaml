@@ -1,0 +1,28 @@
+services:
+  cuda:
+    extends:
+      file: compose.base.yaml
+      service: base
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.cuda
+    ports:
+      - "8085:8082"
+    user: "0:0"
+    security_opt:
+      - label=disable
+    gpus: all
+    volumes:
+      - ./benchmarks:/app/benchmarks:ro,z
+      - ./models:/models:ro,z
+    environment:
+      TTS_PROVIDER: qwen3-tts
+      TTS_MODEL: qwen3-tts-0.6b
+      TTS_VOICE: helena
+      TTS_VOICE_SOURCE: /app/benchmarks/helena/helena-24k.wav
+      TTS_MAX_CACHED_MODELS: "1"
+      TTS_PROVIDER_OPTIONS_FILE: /app/config/providers.json
+      TTS_PROVIDER_OPTIONS: '{"qwen3-tts":{"device":"CUDA0"}}'
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    shm_size: "2gb"

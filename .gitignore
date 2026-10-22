@@ -29,3 +29,17 @@ benchmarks/chatterbox-emotions/*
 benchmarks/chatterbox-emotions/controlled/*
 !benchmarks/chatterbox-emotions/controlled/*.md
 !benchmarks/chatterbox-emotions/controlled/*.json
+
+# Shipped base voices
+!voices/
+voices/*
+!voices/README.md
+!voices/eloa.wav
+!voices/eloa.safetensors
+!voices/eloa.lab
+!voices/eloa.txt
+!voices/eloa.spk
+!voices/eloa.rvq
+!voices/eloa.gguf
+!voices/eloa-ptbr.gguf
+!voices/eloa-turbo.gguf

@@ -1,0 +1,26 @@
+services:
+  vulkan:
+    extends:
+      file: compose.base.yaml
+      service: base
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.vulkan
+    ports:
+      - "8084:8082"
+    user: "0:0"
+    security_opt:
+      - label=disable
+    devices:
+      - /dev/dri:/dev/dri
+    volumes:
+      - ./benchmarks:/app/benchmarks:ro,z
+      - ./models:/models:ro,z
+    environment:
+      TTS_PROVIDER: qwen3-tts
+      TTS_MODEL: qwen3-tts-0.6b
+      TTS_VOICE: helena
+      TTS_VOICE_SOURCE: /app/benchmarks/helena/helena-24k.wav
+      TTS_MAX_CACHED_MODELS: "1"
+      TTS_PROVIDER_OPTIONS_FILE: /app/config/providers.json
+      TTS_PROVIDER_OPTIONS: '{"qwen3-tts":{"device":"Vulkan0"}}'

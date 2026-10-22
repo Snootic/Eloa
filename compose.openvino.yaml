@@ -1,0 +1,21 @@
+services:
+  openvino:
+    extends:
+      file: compose.base.yaml
+      service: base
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.openvino
+    ports:
+      - "8083:8082"
+    user: "0:0"
+    security_opt:
+      - label=disable
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      TTS_PROVIDER: chatterbox-turbo-ov
+      TTS_MODEL: chatterbox-turbo
+      TTS_VOICE: ad-women
+      TTS_VOICE_SOURCE: /app/voices/ad-women.wav
+      TTS_OPTIONS: '{"device":"GPU"}'

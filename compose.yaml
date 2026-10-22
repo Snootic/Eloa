@@ -1,112 +1,14 @@
 name: pocket-tts
 
-x-hf: &hf
-  HF_HOME: /cache/huggingface
-  HF_TOKEN: ${HF_TOKEN:-}
+# Shared top-level resources. Environment files extend compose.base.yaml:
+#   docker compose -f compose.yaml -f compose.cpu.yaml up --build
+#   docker compose -f compose.yaml -f compose.openvino.yaml up --build
+#   docker compose -f compose.yaml -f compose.vulkan.yaml up --build
+#   docker compose -f compose.yaml -f compose.cuda.yaml up --build
 
-services:
-  cpu:
-    profiles: ["cpu"]
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.cpu
-    ports:
-      - "8082:8082"
-    volumes:
-      - ./voices:/app/voices:ro,z
-      - tts-hf-cache:/cache/huggingface
-    environment:
-      <<: *hf
-      TTS_PROVIDER: pocket-tts
-      TTS_MODEL: portuguese
-      TTS_MODEL_CATALOG: /app/config/models.json
-      TTS_VOICE: camilly-portuguese
-    restart: unless-stopped
-
-  openvino:
-    profiles: ["openvino"]
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.openvino
-    ports:
-      - "8083:8082"
-    user: "0:0"
-    security_opt:
-      - label=disable
-    devices:
-      - /dev/dri:/dev/dri
-    volumes:
-      - ./voices:/app/voices:ro,z
-      - tts-hf-cache:/cache/huggingface
-    environment:
-      <<: *hf
-      TTS_PROVIDER: chatterbox-turbo-ov
-      TTS_MODEL: chatterbox-turbo
-      TTS_MODEL_CATALOG: /app/config/models.json
-      TTS_VOICE: ad-women
-      TTS_VOICE_SOURCE: /app/voices/ad-women.wav
-      TTS_OPTIONS: '{"device":"GPU"}'
-    restart: unless-stopped
-
-  vulkan:
-    profiles: ["vulkan"]
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.vulkan
-    ports:
-      - "8084:8082"
-    user: "0:0"
-    security_opt:
-      - label=disable
-    devices:
-      - /dev/dri:/dev/dri
-    volumes:
-      - ./voices:/app/voices:ro,z
-      - ./benchmarks:/app/benchmarks:ro,z
-      - ./models:/models:ro,z
-      - tts-hf-cache:/cache/huggingface
-    environment:
-      <<: *hf
-      TTS_PROVIDER: qwen3-tts
-      TTS_MODEL: qwen3-tts-0.6b
-      TTS_VOICE: helena
-      TTS_VOICE_SOURCE: /app/benchmarks/helena/helena-24k.wav
-      TTS_MODEL_CATALOG: /app/config/models.json
-      TTS_MAX_CACHED_MODELS: "1"
-      TTS_PROVIDER_OPTIONS_FILE: /app/config/providers.json
-      TTS_PROVIDER_OPTIONS: '{"qwen3-tts":{"device":"Vulkan0"}}'
-    restart: unless-stopped
-
-  cuda:
-    profiles: ["cuda"]
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.cuda
-    ports:
-      - "8085:8082"
-    user: "0:0"
-    security_opt:
-      - label=disable
-    gpus: all
-    volumes:
-      - ./voices:/app/voices:ro,z
-      - ./benchmarks:/app/benchmarks:ro,z
-      - ./models:/models:ro,z
-      - tts-hf-cache:/cache/huggingface
-    environment:
-      <<: *hf
-      TTS_PROVIDER: qwen3-tts
-      TTS_MODEL: qwen3-tts-0.6b
-      TTS_VOICE: helena
-      TTS_VOICE_SOURCE: /app/benchmarks/helena/helena-24k.wav
-      TTS_MODEL_CATALOG: /app/config/models.json
-      TTS_MAX_CACHED_MODELS: "1"
-      TTS_PROVIDER_OPTIONS_FILE: /app/config/providers.json
-      TTS_PROVIDER_OPTIONS: '{"qwen3-tts":{"device":"CUDA0"}}'
-      NVIDIA_VISIBLE_DEVICES: all
-      NVIDIA_DRIVER_CAPABILITIES: compute,utility
-    shm_size: "2gb"
-    restart: unless-stopped
+networks:
+  local:
+    external: true
 
 volumes:
   tts-hf-cache:

@@ -1,0 +1,14 @@
+services:
+  cpu:
+    extends:
+      file: compose.base.yaml
+      service: base
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.cpu
+    ports:
+      - "8082:8082"
+    environment:
+      TTS_PROVIDER: pocket-tts
+      TTS_MODEL: portuguese
+      TTS_VOICE: camilly-portuguese

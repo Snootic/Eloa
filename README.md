@@ -61,6 +61,15 @@ rate, channels), binary audio frames, then `speech.done`. PCM16 HTTP responses
 carry `X-Sample-Rate` and `X-Audio-Format` headers; use them instead of
 assuming 24 kHz.
 
+### Base voices
+
+`voices/eloa.*` ships as a base voice. Select `voice: "eloa"`; providers
+discover the format they support automatically: Pocket TTS `.safetensors`,
+WAV-cloning providers `.wav` + `.lab`, Qwen `.spk` + `.rvq` + `.txt`, and
+Chatterbox `.gguf`. See `voices/README.md` for the full matrix. Eloa is
+available out of the box rather than replacing each provider's existing
+default voice.
+
 ### Qwen3-TTS on Vulkan (workstation)
 
 `run_qwen_vulkan.sh [model-alias]` starts Qwen3-TTS on an Intel Arc GPU. The
@@ -124,21 +133,25 @@ voice list.
 
 Four images cover the execution backends:
 
-| Profile | Image contents | Host port |
+| Environment file | Image contents | Host port |
 |---|---|---:|
-| `cpu` | Pocket TTS + Kokoro, torch CPU | 8082 |
-| `openvino` | Chatterbox-Turbo ONNX, OpenVINO, Intel GPU runtime | 8083 |
-| `vulkan` | Qwen3-TTS via qwentts.cpp built with Vulkan | 8084 |
-| `cuda` | Qwen3-TTS via qwentts.cpp built with CUDA | 8085 |
+| `compose.cpu.yaml` | Pocket TTS + Kokoro, torch CPU | 8082 |
+| `compose.openvino.yaml` | Chatterbox-Turbo ONNX, OpenVINO, Intel GPU runtime | 8083 |
+| `compose.vulkan.yaml` | Qwen3-TTS via qwentts.cpp built with Vulkan | 8084 |
+| `compose.cuda.yaml` | Qwen3-TTS via qwentts.cpp built with CUDA | 8085 |
 
-Build and start one profile:
+`compose.yaml` holds the shared project name, external `local` network, and
+cache volume. The environment files extend the common service template in
+`compose.base.yaml`. Merge the shared file with one environment file:
 
 ```sh
-docker compose --profile cpu up --build
-docker compose --profile openvino up --build
-docker compose --profile vulkan up --build
-docker compose --profile cuda up --build
+docker compose -f compose.yaml -f compose.cpu.yaml up --build
+docker compose -f compose.yaml -f compose.openvino.yaml up --build
+docker compose -f compose.yaml -f compose.vulkan.yaml up --build
+docker compose -f compose.yaml -f compose.cuda.yaml up --build
 ```
+
+Use `-f compose.yaml -f compose.<env>.yaml down` to stop that environment.
 
 All images use the same configurable entrypoint:
 
@@ -169,22 +182,23 @@ The CPU image installs the `kokoro` extra by default. Build it slimmer with
   GPUs. The CUDA image is built from `nvidia/cuda:12.8.1`.
 
 GPU containers run as root with `security_opt: label=disable` so they can open
-`/dev/dri`; CPU remains the default for the `cpu` profile.
+`/dev/dri`; the CPU environment remains the non-GPU option.
 
 SELinux hosts need the `:z` relabel that the Compose file already applies to
-bind mounts. The GPU profiles additionally disable SELinux labeling for device
+bind mounts. The GPU environments additionally disable SELinux labeling for device
 access.
 
 ### Model and voice mounts
 
-Model weights are **not** baked into the images. The Compose file mounts:
+Model weights are **not** baked into the images. The base Compose template
+mounts:
 
 - `./voices` → `/app/voices`
 - `./benchmarks` → `/app/benchmarks` (Helena ICL reference)
 - `./models` → `/models` (Qwen GGUF)
 - the `tts-hf-cache` volume → `/cache/huggingface`
 
-For the Qwen profiles, download the 0.6B Q8 files:
+For the Qwen environments, download the 0.6B Q8 files:
 
 ```sh
 mkdir -p models
@@ -197,12 +211,12 @@ The Vulkan/CUDA defaults use the Helena voice in
 is absent, set `TTS_VOICE_SOURCE` and `TTS_VOICE` to a reference clip you have
 (and provide its transcript), or send provider options per HTTP request.
 
-The OpenVINO profile defaults to `chatterbox-turbo-ov` with
+The OpenVINO environment defaults to `chatterbox-turbo-ov` with
 `voices/ad-women.wav`; set `TTS_PROVIDER=fish-s1-mini` etc. to use another
 installed provider. Fish is gated and needs `HF_TOKEN`.
 
 The Qwen images build `qwentts.cpp` at commit `5916bf7` with
-`-DQWEN_SHARED=ON` and load `libqwen.so` natively. The Vulkan profile uses
+`-DQWEN_SHARED=ON` and load `libqwen.so` natively. The Vulkan environment uses
 `Vulkan0`; CUDA uses `CUDA0`. The images read model aliases from
 `/app/config/models.json` and provider defaults from `/app/config/providers.json`,
 so changing `TTS_MODEL` (for example to `qwen3-tts-0.6b-q6`) or the request
