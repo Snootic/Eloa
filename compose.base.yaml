@@ -14,6 +14,8 @@ services:
     environment:
       <<: *hf
       TTS_MODEL_CATALOG: /app/config/models.json
+      TTS_LAZY_LOAD: "1"
+      TTS_MAX_LOADED_MODELS: "1"
     labels:
         #https://git.coisas-mais-estranhas.com.br/snootic/lab
       - "traefik.enable=true"

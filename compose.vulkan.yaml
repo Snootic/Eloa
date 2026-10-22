@@ -21,7 +21,8 @@ services:
       TTS_PROVIDER: qwen3-tts
       TTS_MODEL: qwen3-tts-0.6b
       TTS_VOICE: eloa
-      TTS_MAX_CACHED_MODELS: "1"
+      TTS_MAX_LOADED_MODELS: "1"
+      TTS_LAZY_LOAD: "1"
       TTS_PROVIDER_OPTIONS_FILE: /app/config/providers.json
       TTS_PROVIDER_OPTIONS: '{"qwen3-tts":{"device":"Vulkan0"}}'
 

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Download the GGUF files a Qwen3-TTS container needs, then exec the app.
+"""Seed voices and optionally pre-download Qwen GGUF files, then exec the app.
 
-The CUDA/Vulkan images run this as their entrypoint. Existing files are left
-alone; the default repository is Serveurperso/Qwen3-TTS-GGUF. Override with
-QWEN_GGUF_REPO, QWEN_GGUF_FILES (comma-separated) or QWEN_GGUF_QUANT.
+The CUDA/Vulkan images run this as their entrypoint. Model files are downloaded
+on the first request by the provider by default; set ``QWEN_PRELOAD=1`` to
+restore startup downloads. Existing files are left alone; the default
+repository is Serveurperso/Qwen3-TTS-GGUF. Override with QWEN_GGUF_REPO,
+QWEN_GGUF_FILES (comma-separated) or QWEN_GGUF_QUANT.
 """
 
 from __future__ import annotations
@@ -15,8 +17,9 @@ import sys
 from pathlib import Path
 
 DEFAULT_REPO = "Serveurperso/Qwen3-TTS-GGUF"
-DEFAULT_TOKENIZER = "qwen-tokenizer-12hz-Q8_0.gguf"
 QUANT_NAMES = {
+    "bf16": "BF16",
+    "f32": "F32",
     "q8": "Q8_0",
     "q8_0": "Q8_0",
     "q6": "Q6_K",
@@ -28,12 +31,16 @@ QUANT_NAMES = {
 }
 
 
+def _truthy(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _quant_from_model(model: str) -> str:
-    match = re.search(r"-(q[0-9](?:_[a-z0-9]+)*)$", model.lower())
+    match = re.search(r"-(q[0-9](?:_[a-z0-9]+)*|bf16|f32)$", model.lower())
     if match:
-        return QUANT_NAMES.get(match.group(1), "Q8_0")
+        return QUANT_NAMES.get(match.group(1), "BF16")
     explicit = os.getenv("QWEN_GGUF_QUANT", "").lower()
-    return QUANT_NAMES.get(explicit, "Q8_0")
+    return QUANT_NAMES.get(explicit, "BF16")
 
 
 def _files_for_model(model: str) -> list[str]:
@@ -45,10 +52,17 @@ def _files_for_model(model: str) -> list[str]:
     if extra:
         return extra
     size = "1.7b" if "1.7b" in model.lower() else "0.6b"
-    quant = _quant_from_model(model)
+    requested = _quant_from_model(model)
+    quant = requested
+    if quant not in {"BF16", "F32", "Q8_0", "Q4_K_M"}:
+        # Q6/Q5 are generated locally from BF16 by the provider.
+        quant = "BF16"
+    codec_quant = "BF16" if requested in {"BF16", "F32"} else "Q8_0"
     return [
         f"qwen-talker-{size}-base-{quant}.gguf",
-        os.getenv("QWEN_TOKENIZER_GGUF", DEFAULT_TOKENIZER),
+        os.getenv(
+            "QWEN_TOKENIZER_GGUF", f"qwen-tokenizer-12hz-{codec_quant}.gguf"
+        ),
     ]
 
 
@@ -68,7 +82,7 @@ def _seed_base_voices() -> None:
 def main() -> None:
     _seed_base_voices()
     provider = os.getenv("TTS_PROVIDER", "qwen3-tts")
-    if provider == "qwen3-tts":
+    if provider == "qwen3-tts" and _truthy("QWEN_PRELOAD"):
         models_dir = Path(os.getenv("TTS_MODELS_DIR", "/models"))
         models_dir.mkdir(parents=True, exist_ok=True)
         repo = os.getenv("QWEN_GGUF_REPO", DEFAULT_REPO)

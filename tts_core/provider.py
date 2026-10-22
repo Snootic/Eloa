@@ -70,6 +70,9 @@ class SynthesisModel(ABC):
         """Persist conditioning state so it can be reused without the sample."""
         raise NotImplementedError(f"{type(self).__name__} cannot export voices")
 
+    def close(self) -> None:
+        """Release backend resources when the engine unloads this model."""
+
 
 def concatenate(chunks: Iterable[AudioChunk]) -> AudioChunk:
     """Join provider chunks into one mono float32 array."""

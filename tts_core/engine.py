@@ -1,6 +1,7 @@
 """Model-agnostic TTS engine: model cache, voice cache, and wire encoding."""
 
 import json
+import logging
 import threading
 from collections import OrderedDict
 from collections.abc import Iterator, Mapping
@@ -12,6 +13,8 @@ from tts_core.audio import OPUS_SAMPLE_RATE, AudioFormat, to_pcm16
 from tts_core.encoding import encode_opus
 from tts_core.provider import SynthesisModel, TTSProvider, VoiceState
 from tts_core.registry import ProviderRegistry, default_registry
+
+logger = logging.getLogger(__name__)
 
 type ModelKey = tuple[str, str]
 
@@ -50,25 +53,35 @@ class TTSEngine:
         voices_dir: str | Path = "voices",
         default_voice_source: str | Path | None = None,
         registry: ProviderRegistry | None = None,
-        max_cached_models: int = 2,
+        max_loaded_models: int = 1,
+        lazy: bool = True,
     ):
-        """Load ``provider``/``model``/``voice`` and make them the active pair.
+        """Configure the engine without necessarily loading a model.
 
-        ``default_voice_source`` is the conditioning used for any voice name
-        that has no export in ``voices_dir``.
+        With ``lazy=True`` the constructor validates the provider but the model
+        and voice are loaded on the first generation, voice-loading, or model
+        introspection call. Set ``max_loaded_models`` to keep more than one
+        provider/model resident; the least-recently-used model is unloaded when
+        a new one would exceed the limit.
         """
-        if max_cached_models < 1:
-            raise ValueError("max_cached_models must be at least 1")
+        if max_loaded_models < 1:
+            raise ValueError("max_loaded_models must be at least 1")
 
         self._registry = registry if registry is not None else default_registry()
+        self._registry.get(provider)
         self._voices_dir = Path(voices_dir)
         self._default_voice_source = default_voice_source
-        self._max_cached_models = max_cached_models
+        self._max_loaded_models = max_loaded_models
         self._models: OrderedDict[ModelKey, SynthesisModel] = OrderedDict()
         self._voice_caches: dict[ModelKey, dict[str, VoiceState]] = {}
         # Model instances keep per-utterance state (KV caches), so requests on
         # the same instance must not interleave.
         self._generation_locks: dict[ModelKey, threading.Lock] = {}
+        # Streams lease their model so an LRU eviction cannot close weights
+        # while a response is still being written. Evicted models with active
+        # leases are closed as soon as the last stream releases them.
+        self._leases: dict[ModelKey, int] = {}
+        self._retired: dict[ModelKey, list[SynthesisModel]] = {}
         self._lock = threading.RLock()
         self._active: ActiveModel | None = None
         self._active_voice: str | None = None
@@ -82,10 +95,13 @@ class TTSEngine:
         # The voice selected at startup belongs to the startup provider; other
         # providers fall back to their own default voice.
         self._default_voices: dict[str, str] = {}
-        active = self._select(provider, model, None)
-        self._activate_voice(active, voice)
-        if self._active_voice is not None:
-            self._default_voices[provider] = self._active_voice
+        if voice is not None:
+            self._default_voices[provider] = voice
+        if not lazy:
+            active = self._select(provider, model, None)
+            self._activate_voice(active, voice)
+            if self._active_voice is not None:
+                self._default_voices[provider] = self._active_voice
 
     # ------------------------------------------------------------------
     # Model and voice selection
@@ -115,10 +131,8 @@ class TTSEngine:
                 self._models[key] = synthesis
                 self._voice_caches[key] = {}
                 self._generation_locks[key] = threading.Lock()
-                while len(self._models) > self._max_cached_models:
-                    evicted_key, _ = self._models.popitem(last=False)
-                    del self._voice_caches[evicted_key]
-                    del self._generation_locks[evicted_key]
+                while len(self._models) > self._max_loaded_models:
+                    self._evict_oldest()
             else:
                 self._models.move_to_end(key)
 
@@ -127,6 +141,40 @@ class TTSEngine:
             active = ActiveModel(key, provider, model, resolved, synthesis)
             self._active = active
             return active
+
+    def _evict_oldest(self) -> None:
+        """Remove the least-recently-used model, closing it when safe."""
+        key, synthesis = self._models.popitem(last=False)
+        self._voice_caches.pop(key, None)
+        self._generation_locks.pop(key, None)
+        if self._leases.get(key, 0) > 0:
+            self._retired.setdefault(key, []).append(synthesis)
+        else:
+            self._close_model(synthesis)
+
+    @staticmethod
+    def _close_model(synthesis: SynthesisModel) -> None:
+        close = getattr(synthesis, "close", None)
+        if not callable(close):
+            return
+        try:
+            close()
+        except Exception:
+            logger.exception("Could not close evicted TTS model")
+
+    def _acquire(self, key: ModelKey) -> None:
+        with self._lock:
+            self._leases[key] = self._leases.get(key, 0) + 1
+
+    def _release(self, key: ModelKey) -> None:
+        with self._lock:
+            remaining = self._leases.get(key, 0) - 1
+            if remaining > 0:
+                self._leases[key] = remaining
+                return
+            self._leases.pop(key, None)
+            for synthesis in self._retired.pop(key, []):
+                self._close_model(synthesis)
 
     def _resolve_voice_source(
         self, active: ActiveModel, voice_name: str, source: str | Path | None
@@ -175,6 +223,19 @@ class TTSEngine:
         self._active_voice = name
         return state
 
+    def _ensure_active(self) -> ActiveModel:
+        with self._lock:
+            active = self._active
+            if active is None:
+                return self._select(self._default_provider, self._default_model, None)
+            return active
+
+    def _ensure_active_voice(self) -> ActiveModel:
+        active = self._ensure_active()
+        if self._active_voice is None:
+            self._activate_voice(active, None)
+        return active
+
     def load_model(
         self,
         provider: str | None = None,
@@ -194,9 +255,9 @@ class TTSEngine:
         voice_name: str | None = None,
         audio_conditioning: str | Path | None = None,
     ) -> VoiceState:
-        """Select a voice for the active model, exporting or loading as needed."""
+        """Select a voice for the active model, loading the model if needed."""
         with self._lock:
-            active = self._require_active()
+            active = self._ensure_active()
             return self._activate_voice(active, voice_name, audio_conditioning)
 
     # ------------------------------------------------------------------
@@ -230,25 +291,39 @@ class TTSEngine:
                 if audio_format is AudioFormat.PCM16
                 else OPUS_SAMPLE_RATE
             )
+            self._acquire(active.key)
+            try:
+                chunks = self._encode(
+                    active.synthesis,
+                    voice_state,
+                    text,
+                    audio_format,
+                    active.options,
+                )
+            except Exception:
+                self._release(active.key)
+                raise
             return SpeechStream(
                 chunks=self._serialized(
+                    active.key,
                     self._generation_locks[active.key],
-                    self._encode(
-                        active.synthesis,
-                        voice_state,
-                        text,
-                        audio_format,
-                        active.options,
-                    ),
+                    chunks,
                 ),
                 sample_rate=sample_rate,
                 audio_format=audio_format,
             )
 
-    @staticmethod
-    def _serialized(lock: threading.Lock, chunks: Iterator[bytes]) -> Iterator[bytes]:
-        with lock:
-            yield from chunks
+    def _serialized(
+        self,
+        key: ModelKey,
+        lock: threading.Lock,
+        chunks: Iterator[bytes],
+    ) -> Iterator[bytes]:
+        try:
+            with lock:
+                yield from chunks
+        finally:
+            self._release(key)
 
     @staticmethod
     def _encode(
@@ -265,13 +340,22 @@ class TTSEngine:
 
     def _active_snapshot(
         self,
-    ) -> tuple[threading.Lock, SynthesisModel, VoiceState, Mapping[str, Any]]:
+    ) -> tuple[
+        ModelKey,
+        threading.Lock,
+        SynthesisModel,
+        VoiceState,
+        Mapping[str, Any],
+    ]:
         with self._lock:
-            active = self._require_active()
-            if self._active_voice is None:
+            active = self._ensure_active_voice()
+            voice_name = self._active_voice
+            if voice_name is None:
                 raise RuntimeError("No voice is selected; call load_voice() first")
-            voice = self._voice_caches[active.key][self._active_voice]
+            voice = self._voice_caches[active.key][voice_name]
+            self._acquire(active.key)
             return (
+                active.key,
                 self._generation_locks[active.key],
                 active.synthesis,
                 voice,
@@ -282,21 +366,27 @@ class TTSEngine:
         self, text: str, audio_format: AudioFormat = AudioFormat.PCM16
     ) -> Iterator[bytes]:
         """Stream encoded audio from the active model/voice."""
-        lock, model, voice, options = self._active_snapshot()
-        return self._serialized(
-            lock, self._encode(model, voice, text, audio_format, options)
-        )
+        key, lock, model, voice, options = self._active_snapshot()
+        try:
+            chunks = self._encode(model, voice, text, audio_format, options)
+        except Exception:
+            self._release(key)
+            raise
+        return self._serialized(key, lock, chunks)
 
     def generate_full(
         self, text: str, audio_format: AudioFormat = AudioFormat.PCM16
     ) -> bytes:
         """Render the whole utterance through the provider's non-streaming path."""
-        lock, model, voice, options = self._active_snapshot()
-        with lock:
-            audio = model.synthesize_all(voice, text, options=options)
-        if audio_format is AudioFormat.PCM16:
-            return to_pcm16(audio)
-        return b"".join(encode_opus([audio], model.sample_rate, audio_format))
+        key, lock, model, voice, options = self._active_snapshot()
+        try:
+            with lock:
+                audio = model.synthesize_all(voice, text, options=options)
+            if audio_format is AudioFormat.PCM16:
+                return to_pcm16(audio)
+            return b"".join(encode_opus([audio], model.sample_rate, audio_format))
+        finally:
+            self._release(key)
 
     def generate(
         self, text: str, audio_format: AudioFormat = AudioFormat.PCM16
@@ -344,11 +434,6 @@ class TTSEngine:
             )
         return sorted(names)
 
-    def _require_active(self) -> ActiveModel:
-        if self._active is None:
-            raise RuntimeError("No model is selected")
-        return self._active
-
     @property
     def default_provider(self) -> str:
         return self._default_provider
@@ -368,11 +453,11 @@ class TTSEngine:
 
     @property
     def model(self) -> SynthesisModel:
-        return self._require_active().synthesis
+        return self._ensure_active().synthesis
 
     @property
     def sample_rate(self) -> int:
-        return self._require_active().synthesis.sample_rate
+        return self._ensure_active().synthesis.sample_rate
 
     @property
     def active_voice(self) -> str | None:
@@ -380,5 +465,5 @@ class TTSEngine:
 
     @property
     def voices(self) -> dict[str, VoiceState]:
-        active = self._require_active()
+        active = self._ensure_active()
         return self._voice_caches[active.key]

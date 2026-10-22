@@ -36,22 +36,30 @@ CACHE_DIR = Path(tempfile.gettempdir()) / "pocket-tts-qwen3"
 CATALOG = load_model_catalog().get("qwen3-tts", {})
 CATALOG_MODELS = CATALOG.get("models", {})
 FALLBACK_MODELS = {
-    "qwen3-tts-0.6b": {"size": "0.6b", "quant": "Q8_0"},
-    "qwen3-tts-0.6b-q8": {"size": "0.6b", "quant": "Q8_0"},
-    "qwen3-tts-0.6b-q6": {"size": "0.6b", "quant": "Q6_K"},
-    "qwen3-tts-0.6b-q5": {"size": "0.6b", "quant": "Q5_K_M"},
-    "qwen3-tts-0.6b-q4": {"size": "0.6b", "quant": "Q4_K_M"},
-    "qwen3-tts-1.7b": {"size": "1.7b", "quant": "Q8_0"},
-    "qwen3-tts-1.7b-q8": {"size": "1.7b", "quant": "Q8_0"},
-    "qwen3-tts-1.7b-q6": {"size": "1.7b", "quant": "Q6_K"},
-    "qwen3-tts-1.7b-q5": {"size": "1.7b", "quant": "Q5_K_M"},
-    "qwen3-tts-1.7b-q4": {"size": "1.7b", "quant": "Q4_K_M"},
+    "qwen3-tts-0.6b": {"size": "0.6b", "quant": "BF16", "codec": "BF16"},
+    "qwen3-tts-0.6b-bf16": {"size": "0.6b", "quant": "BF16", "codec": "BF16"},
+    "qwen3-tts-0.6b-q8": {"size": "0.6b", "quant": "Q8_0", "codec": "Q8_0"},
+    "qwen3-tts-0.6b-q6": {"size": "0.6b", "quant": "Q6_K", "codec": "Q8_0"},
+    "qwen3-tts-0.6b-q5": {"size": "0.6b", "quant": "Q5_K_M", "codec": "Q8_0"},
+    "qwen3-tts-0.6b-q4": {"size": "0.6b", "quant": "Q4_K_M", "codec": "Q8_0"},
+    "qwen3-tts-1.7b": {"size": "1.7b", "quant": "BF16", "codec": "BF16"},
+    "qwen3-tts-1.7b-bf16": {"size": "1.7b", "quant": "BF16", "codec": "BF16"},
+    "qwen3-tts-1.7b-q8": {"size": "1.7b", "quant": "Q8_0", "codec": "Q8_0"},
+    "qwen3-tts-1.7b-q6": {"size": "1.7b", "quant": "Q6_K", "codec": "Q8_0"},
+    "qwen3-tts-1.7b-q5": {"size": "1.7b", "quant": "Q5_K_M", "codec": "Q8_0"},
+    "qwen3-tts-1.7b-q4": {"size": "1.7b", "quant": "Q4_K_M", "codec": "Q8_0"},
 }
 MODEL_ALIASES = {**FALLBACK_MODELS, **CATALOG_MODELS}
 TALKER_PATTERN = CATALOG.get("talker_pattern", "qwen-talker-{size}-base-{quant}.gguf")
+CODEC_PATTERN = CATALOG.get(
+    "codec_pattern", "qwen-tokenizer-12hz-{quant}.gguf"
+)
 DEFAULT_CODEC = CATALOG.get("codec", "qwen-tokenizer-12hz-Q8_0.gguf")
 DEFAULT_REPOSITORY = "Serveurperso/Qwen3-TTS-GGUF"
+DOWNLOADABLE_QUANTS = frozenset({"BF16", "F32", "Q8_0", "Q4_K_M"})
 QUANT_ALIASES = {
+    "bf16": "BF16",
+    "f32": "F32",
     "q8": "Q8_0",
     "q8_0": "Q8_0",
     "q6": "Q6_K",
@@ -73,6 +81,7 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     "codec": None,
     "binary": None,
     "codec_binary": None,
+    "quantize_binary": None,
     "device": "Vulkan0",
     "language": "auto",
     "seed": 42,
@@ -463,7 +472,11 @@ class Qwen3TTSProvider(TTSProvider):
     def _model_spec(model: str) -> dict[str, str]:
         spec = MODEL_ALIASES.get(model)
         if isinstance(spec, dict) and "size" in spec and "quant" in spec:
-            return {"size": str(spec["size"]), "quant": str(spec["quant"])}
+            return {
+                str(key): str(value)
+                for key, value in spec.items()
+                if key in {"size", "quant", "codec"}
+            }
         size = "1.7b" if "1.7b" in model else "0.6b"
         suffix = model.rsplit("-", 1)[-1].lower()
         return {"size": size, "quant": QUANT_ALIASES.get(suffix, "Q8_0")}
@@ -497,7 +510,14 @@ class Qwen3TTSProvider(TTSProvider):
         resolved["talker"] = str(talker)
         resolved["models_dir"] = str(models)
         if resolved["codec"] is None:
-            resolved["codec"] = str(models / DEFAULT_CODEC)
+            codec = spec.get("codec")
+            if codec is None:
+                codec_path = models / DEFAULT_CODEC
+            elif codec.endswith(".gguf"):
+                codec_path = models / codec
+            else:
+                codec_path = models / CODEC_PATTERN.format(quant=codec)
+            resolved["codec"] = str(codec_path)
         if resolved["binary"] is None:
             resolved["binary"] = "build/qwen-tts"
         if resolved["codec_binary"] is None:
@@ -511,18 +531,85 @@ class Qwen3TTSProvider(TTSProvider):
             if key not in PER_REQUEST_OPTIONS
         }
 
+    @staticmethod
+    def _ensure_quantized(
+        path: Path,
+        model: str,
+        options: Mapping[str, Any],
+        repository: str,
+    ) -> None:
+        """Quantize the matching BF16 talker when a K-quant is not published."""
+        spec = Qwen3TTSProvider._model_spec(model)
+        quant = spec["quant"]
+        if quant in DOWNLOADABLE_QUANTS:
+            raise FileNotFoundError(
+                f"Qwen3-TTS talker file not found: {path}. The repository "
+                f"{repository} did not provide it."
+            )
+        base = path.with_name(
+            TALKER_PATTERN.format(size=spec["size"], quant="BF16")
+        )
+        _download_model_file(base, repository)
+        quantize = _resolve_executable(
+            str(options.get("quantize_binary") or "build/quantize"), "quantize"
+        )
+        temporary = path.with_suffix(".gguf.tmp")
+        logger.info("Quantizing %s -> %s (%s)", base.name, path.name, quant)
+        try:
+            result = subprocess.run(
+                [str(quantize), str(base), str(temporary), quant],
+                capture_output=True,
+                timeout=1800,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            temporary.unlink(missing_ok=True)
+            raise RuntimeError(f"Timed out quantizing Qwen talker {path}") from error
+        if result.returncode != 0:
+            temporary.unlink(missing_ok=True)
+            detail = result.stderr.decode("utf-8", "replace").strip().splitlines()
+            raise RuntimeError(
+                f"Could not quantize Qwen talker {path} to {quant}: "
+                + ("\n".join(detail[-8:]) or "no stderr output")
+            )
+        temporary.replace(path)
+
+    def _ensure_talker(
+        self,
+        path: Path,
+        model: str,
+        options: Mapping[str, Any],
+        repository: str,
+    ) -> None:
+        if path.is_file() and path.stat().st_size > 0:
+            return
+        if not bool(options.get("auto_download", True)):
+            raise FileNotFoundError(
+                f"Qwen3-TTS talker file not found: {path}. Download the GGUF "
+                "or set the provider option."
+            )
+        try:
+            _download_model_file(path, repository)
+        except FileNotFoundError:
+            spec = self._model_spec(model)
+            if spec["quant"] in DOWNLOADABLE_QUANTS:
+                raise
+            self._ensure_quantized(path, model, options, repository)
+
     def load_model(self, options: dict[str, Any]) -> Qwen3TTSModel:
         auto_download = bool(options.get("auto_download", True))
         repository = str(options.get("model_repository") or DEFAULT_REPOSITORY)
-        for key in ("talker", "codec"):
-            path = Path(str(options[key]))
-            if auto_download:
-                _download_model_file(path, repository)
-            elif not path.is_file():
-                raise FileNotFoundError(
-                    f"Qwen3-TTS {key} file not found: {path}. Download the GGUFs "
-                    "from Serveurperso/Qwen3-TTS-GGUF or set the provider option."
-                )
+        model = str(options.get("model") or "")
+        talker = Path(str(options["talker"]))
+        self._ensure_talker(talker, model, options, repository)
+        codec = Path(str(options["codec"]))
+        if auto_download:
+            _download_model_file(codec, repository)
+        elif not codec.is_file():
+            raise FileNotFoundError(
+                f"Qwen3-TTS codec file not found: {codec}. Download the GGUF "
+                "or set the provider option."
+            )
         backend = str(options.get("backend") or "auto")
         native_library = options.get("native_library")
         if backend != "cli" and native_library:

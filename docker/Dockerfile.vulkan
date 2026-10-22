@@ -20,10 +20,10 @@ RUN git clone --recursive "${QWENTTS_REPO}" /src/qwentts \
 RUN cmake -S /src/qwentts -B /src/qwentts/build \
         -DGGML_VULKAN=ON -DQWEN_SHARED=ON -DCMAKE_BUILD_TYPE=Release \
     && cmake --build /src/qwentts/build -j"$(nproc)" \
-        --target qwen qwen-tts qwen-codec
+        --target qwen qwen-tts qwen-codec quantize
 
 RUN mkdir -p /opt/qwentts/lib \
-    && cp /src/qwentts/build/qwen-tts /src/qwentts/build/qwen-codec /src/qwentts/build/libqwen.so /opt/qwentts/ \
+    && cp /src/qwentts/build/qwen-tts /src/qwentts/build/qwen-codec /src/qwentts/build/quantize /src/qwentts/build/libqwen.so /opt/qwentts/ \
     && find /src/qwentts/build -name '*.so*' -exec cp -a {} /opt/qwentts/lib/ \;
 
 FROM ubuntu:24.04 AS app
@@ -70,7 +70,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TTS_PROVIDER_OPTIONS_FILE=/app/config/providers.json \
     TTS_PROVIDER_OPTIONS='{"qwen3-tts":{"device":"Vulkan0"}}' \
     TTS_VOICE=eloa \
-    TTS_MAX_CACHED_MODELS=1 \
+    TTS_MAX_LOADED_MODELS=1 \
+    TTS_LAZY_LOAD=1 \
     TTS_HOST=0.0.0.0 \
     TTS_PORT=8082
 

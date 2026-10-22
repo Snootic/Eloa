@@ -167,11 +167,22 @@ All images use the same configurable entrypoint:
 | `TTS_PROVIDER_OPTIONS_FILE` | unset (shared JSON map; env options win) |
 | `TTS_MODEL_CATALOG` | `config/models.json` |
 | `TTS_VOICES_DIR` | `voices` |
-| `TTS_MAX_CACHED_MODELS` | `2` |
+| `TTS_LAZY_LOAD` | `1` (load the model on the first request) |
+| `TTS_MAX_LOADED_MODELS` | `1` (LRU-unload other providers/models) |
+| `TTS_MAX_CACHED_MODELS` | deprecated alias for `TTS_MAX_LOADED_MODELS` |
 | `TTS_HOST` / `TTS_PORT` | `0.0.0.0` / `8082` |
 
 The CPU image installs the `kokoro` extra by default. Build it slimmer with
 `--build-arg UV_EXTRAS=` if Kokoro is not needed.
+
+`TTS_LAZY_LOAD=1` means container startup only validates provider names and
+serves `/health`; the first speech request downloads missing weights (if
+needed), loads the model, and loads the voice. `TTS_MAX_LOADED_MODELS` counts
+resident provider/model pairs, not aliases. With the default `1`, requesting a
+Chatterbox voice after Qwen unloads Qwen and closes its native context; set it
+to `2` (or higher) when both must stay warm. An in-flight stream keeps its
+model leased until the last byte is written, so an eviction cannot close a
+model mid-response.
 
 ### GPU prerequisites
 
@@ -201,22 +212,29 @@ mounts:
 The CUDA/Vulkan images bundle the Eloa voice files and the entrypoint copies
 any missing ones into the mounted `/app/voices` directory, so an empty
 `./voices` mount still has `eloa.spk`. The Qwen provider downloads missing GGUF
-files for the requested alias
-(including 1.7B and Q4/Q5/Q6 variants) from
-`Serveurperso/Qwen3-TTS-GGUF` before loading it. The CUDA/Vulkan image
-entrypoint also preloads the `TTS_MODEL` files at startup. Both paths reuse
-existing files and need network access only when something is missing.
-Override the repository with `model_repository` / `QWEN_GGUF_REPO`, or provide
-explicit comma-separated filenames with `QWEN_GGUF_FILES`; `QWEN_GGUF_QUANT`
-overrides the default quantization.
+files for the requested alias on first use, including the default BF16 pair,
+the 1.7B variants, and Q8/Q4. Q6/Q5 talkers that are not published by
+`Serveurperso/Qwen3-TTS-GGUF` are produced from the matching BF16 talker with
+the bundled `quantize` tool. Files are reused when present and network access
+is needed only when something is missing. Override the repository with
+`model_repository` / `QWEN_GGUF_REPO`, or provide explicit comma-separated
+filenames with `QWEN_GGUF_FILES`; `QWEN_GGUF_QUANT` overrides the default
+quantization.
 
-To preload the default 0.6B Q8 files instead of downloading at container start:
+The image entrypoint no longer preloads model files: startup is immediate and
+the GPU model is loaded by the first request. To force the old startup download
+behavior, set `QWEN_PRELOAD=1`.
+
+To preload the default 0.6B BF16 files manually:
 
 ```sh
 mkdir -p models
 uvx --from huggingface_hub hf download Serveurperso/Qwen3-TTS-GGUF \
-  qwen-talker-0.6b-base-Q8_0.gguf qwen-tokenizer-12hz-Q8_0.gguf --local-dir models
+  qwen-talker-0.6b-base-BF16.gguf \
+  qwen-tokenizer-12hz-BF16.gguf --local-dir models
 ```
+
+For a quantized pair, substitute `Q8_0` or `Q4_K_M` in both filenames.
 
 The Vulkan/CUDA environments use the shipped `voices/eloa.spk` Qwen voice.
 The OpenVINO environment uses `chatterbox-turbo-ov` with `voices/eloa.wav`.
@@ -297,16 +315,24 @@ copied into the Docker images. Qwen aliases resolve to
 
 | Alias | Talker |
 |---|---|
-| `qwen3-tts-0.6b` / `-q8` | 0.6B Q8_0 |
+| `qwen3-tts-0.6b` / `-bf16` | 0.6B BF16 (default) |
+| `qwen3-tts-0.6b-q8` | 0.6B Q8_0 |
 | `qwen3-tts-0.6b-q6` | 0.6B Q6_K |
 | `qwen3-tts-0.6b-q5` | 0.6B Q5_K_M |
 | `qwen3-tts-0.6b-q4` | 0.6B Q4_K_M |
-| `qwen3-tts-1.7b*` | 1.7B Q8/Q6/Q5/Q4 |
+| `qwen3-tts-1.7b` / `-bf16` | 1.7B BF16 (default) |
+| `qwen3-tts-1.7b-q8` | 1.7B Q8_0 |
+| `qwen3-tts-1.7b-q6` | 1.7B Q6_K |
+| `qwen3-tts-1.7b-q5` | 1.7B Q5_K_M |
+| `qwen3-tts-1.7b-q4` | 1.7B Q4_K_M |
 
-Set `TTS_MODEL=qwen3-tts-0.6b-q6` (or send `"model"` in the request) to switch
-quantization without changing binary, codec, or voice. `models_dir` points at
-the GGUF directory; explicit `talker`/`codec` options still override the alias.
-`Q4_K_M` is listed for completeness but is broken for the 0.6B talker.
+The `-bf16` and unscoped aliases are the **non-quantized** defaults. Set
+`TTS_MODEL=qwen3-tts-1.7b` for the larger BF16 model, or send `"model"` in the
+request to switch size or quantization without changing binary, codec, or
+voice. `models_dir` points at the GGUF directory; explicit `talker`/`codec`
+options still override the alias. Q6/Q5 are generated from BF16 when the
+repository has no prebuilt file. `Q4_K_M` is listed for completeness but is
+broken for the 0.6B talker.
 
 NeuTTS exposes `neutts-air-q4/q8` and `neutts-nano-q4/q8` aliases; those
 repositories are gated.
@@ -321,8 +347,8 @@ reference clip automatically.
 
 ## Qwen3-TTS (GGML / Vulkan)
 
-`provider: "qwen3-tts"`, models `qwen3-tts-0.6b` (default) and
-`qwen3-tts-1.7b`. This runs the C++ [qwentts.cpp](https://github.com/ServeurpersoCom/qwentts.cpp)
+`provider: "qwen3-tts"`, models `qwen3-tts-0.6b` (default, BF16) and
+`qwen3-tts-1.7b` (BF16). This runs the C++ [qwentts.cpp](https://github.com/ServeurpersoCom/qwentts.cpp)
 port through GGML, so no PyTorch or OpenVINO model runs at request time. The
 0.6B Base model clones a voice from a reference clip; its 1024-dim speaker
 embedding is extracted once and cached as a `.spk` file.
@@ -334,12 +360,12 @@ git clone --recurse-submodules https://github.com/ServeurpersoCom/qwentts.cpp
 cd qwentts.cpp
 cmake -S . -B build-shared -DGGML_VULKAN=ON -DQWEN_SHARED=ON \
   -DCMAKE_BUILD_TYPE=Release
-cmake --build build-shared -j"$(nproc)" --target qwen qwen-tts qwen-codec
+cmake --build build-shared -j"$(nproc)" --target qwen qwen-tts qwen-codec quantize
 
 mkdir -p models
 hf download Serveurperso/Qwen3-TTS-GGUF \
-  qwen-talker-0.6b-base-Q8_0.gguf \
-  qwen-tokenizer-12hz-Q8_0.gguf --local-dir models
+  qwen-talker-0.6b-base-BF16.gguf \
+  qwen-tokenizer-12hz-BF16.gguf --local-dir models
 ```
 
 Use `-DGGML_CUDA=ON` for CUDA or `-DGGML_VULKAN=OFF` for CPU. The recommended
@@ -356,12 +382,13 @@ Point the provider at the shared library and model files:
   "voice": "larissa",
   "input": "Olá, esta é uma demonstração do Qwen3 TTS.",
   "options": {
-    "talker": "/path/to/qwen-talker-0.6b-base-Q8_0.gguf",
-    "codec": "/path/to/qwen-tokenizer-12hz-Q8_0.gguf",
+    "talker": "/path/to/qwen-talker-0.6b-base-BF16.gguf",
+    "codec": "/path/to/qwen-tokenizer-12hz-BF16.gguf",
     "native_library": "/path/to/qwentts.cpp/build-shared/libqwen.so",
     "backend": "native",
     "binary": "/path/to/qwentts.cpp/build/qwen-tts",
     "codec_binary": "/path/to/qwentts.cpp/build/qwen-codec",
+    "quantize_binary": "/path/to/qwentts.cpp/build/quantize",
     "device": "Vulkan0",
     "language": "Portuguese"
   }
@@ -370,12 +397,13 @@ Point the provider at the shared library and model files:
 
 Supported options are `talker`, `codec`, `models_dir`, `native_library`,
 `backend` (`auto`, `native`, `cli`), `use_fa`, `clamp_fp16`, `max_batch`,
-`binary`, `codec_binary`, `device`, `language`, `seed`, `temperature`, `top_k`,
-`top_p`, `repetition_penalty`, `max_new_tokens`, `codec_chunk_dur`, `timeout`,
-`auto_download`, and `model_repository`. Missing GGUF files for any Qwen alias
-are downloaded from `model_repository` when the model is loaded; set
-`auto_download: false` to require preloaded files. With `backend: "auto"`,
-setting `native_library` selects the shared
+`binary`, `codec_binary`, `quantize_binary`, `device`, `language`, `seed`,
+`temperature`, `top_k`, `top_p`, `repetition_penalty`, `max_new_tokens`,
+`codec_chunk_dur`, `timeout`, `auto_download`, and `model_repository`. Missing
+GGUF files for any Qwen alias are downloaded from `model_repository` when the
+model is loaded; unpublished Q6/Q5 talkers are generated from the BF16 file
+with `quantize_binary`. Set `auto_download: false` to require preloaded files.
+With `backend: "auto"`, setting `native_library` selects the shared
 library; without it the provider falls back to the `qwen-tts` subprocess. If
 the sibling GGML libraries are not on the loader path, set
 `LD_LIBRARY_PATH=/path/to/qwentts.cpp/build-shared`.
@@ -408,7 +436,9 @@ synthesizes 3.9 s of audio in **1.04 s**; a warm request on the resident handle
 reaches first audio in **0.055 s** and finishes in **0.82 s** (about **4.8×
 realtime**). The subprocess fallback starts a fresh engine per request and is
 substantially slower. OpenVINO GenAI also has a Qwen3-TTS pipeline, but it
-measured 0.5–0.8× on the same GPU, so it is not the provider used here.
+measured 0.5–0.8× on the same GPU, so it is not the provider used here. The
+default BF16 weights use more VRAM than Q8; the figures below are Q8_0
+reference points.
 
 On the 12.8 GB card, 0.6B Q8 peaks at **2.2 GB** for a 13 s request and
 **3.3 GB** for 80 s with `codec_chunk_dur: 4` (5.2 GB at the default 24 s).
@@ -424,11 +454,12 @@ rather than native concurrency limits.
 
 The native context keeps the model and its KV cache resident. A 0.6B Q8
 context allocates about 2.08 GB at load and 2.30 GB after synthesis; switching
-to Q6 and back reloads the context. Keep `TTS_MAX_CACHED_MODELS=1` for Qwen
+to Q6 and back reloads the context. Keep `TTS_MAX_LOADED_MODELS=1` for Qwen
 (the workstation script and Vulkan/CUDA images set it): caching two native
 quantizations simultaneously costs about 4.3 GB, because each has its own
-weights and KV cache. The old CLI fallback did not retain the previous
-quantization and therefore peaked lower.
+weights and KV cache. Set it to `2` only when another provider (for example
+Chatterbox) must stay warm alongside Qwen. The old CLI fallback did not retain
+the previous quantization and therefore peaked lower.
 
 Any GGUF quantization works by pointing `talker` and `codec` at the matching
 files; no separate engine path is needed. Measured with this runtime:

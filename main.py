@@ -7,7 +7,7 @@ deployments can select another provider/model/voice without editing code:
   TTS_PROVIDER_OPTIONS (JSON map keyed by provider name),
   TTS_PROVIDER_OPTIONS_FILE (shared JSON map, overridden by TTS_PROVIDER_OPTIONS),
   TTS_MODEL_CATALOG (shared model alias catalog),
-  TTS_VOICES_DIR, TTS_MAX_CACHED_MODELS, TTS_HOST, TTS_PORT.
+  TTS_VOICES_DIR, TTS_LAZY_LOAD, TTS_MAX_LOADED_MODELS, TTS_HOST, TTS_PORT.
 """
 
 import json
@@ -68,6 +68,18 @@ def main() -> None:
     model = os.getenv("TTS_MODEL", "portuguese")
     voice = os.getenv("TTS_VOICE", "eloa") or None
     source = os.getenv("TTS_VOICE_SOURCE") or None
+    lazy = os.getenv("TTS_LAZY_LOAD", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+    max_loaded_models = int(
+        os.getenv(
+            "TTS_MAX_LOADED_MODELS",
+            os.getenv("TTS_MAX_CACHED_MODELS", "1"),
+        )
+    )
 
     engine = TTSEngine(
         provider=provider,
@@ -77,7 +89,8 @@ def main() -> None:
         voice=voice,
         voices_dir=os.getenv("TTS_VOICES_DIR", "voices"),
         default_voice_source=source,
-        max_cached_models=int(os.getenv("TTS_MAX_CACHED_MODELS", "2")),
+        max_loaded_models=max_loaded_models,
+        lazy=lazy,
     )
 
     host = os.getenv("TTS_HOST", "0.0.0.0")
