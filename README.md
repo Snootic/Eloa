@@ -566,15 +566,8 @@ card; use the CUDA build.
 `tts-server`/the built-in Qwen path remain faster and stream earlier; the
 Chatterbox native path is for emotion, expressiveness, and its cloning voice.
 
-Emotion presets (sad, neutral, happy, enthusiastic, angry) are benchmarked
-in [`benchmarks/chatterbox-emotions/results.md`](benchmarks/chatterbox-emotions/results.md),
-including generated audio and Q8/F16 VRAM numbers.
-
-The Brazilian-Portuguese fine-tune (`ResembleAI/Chatterbox-Multilingual-pt-br`)
-was converted to GGUF and benchmarked in
-[`benchmarks/chatterbox-emotions/controlled/ptbr-results.md`](benchmarks/chatterbox-emotions/controlled/ptbr-results.md).
-Its local service is `run_chatterbox_ptbr_vulkan.sh` on port 8087; the
-generic multilingual service remains on 8086.
+Benchmark outputs and harnesses are intentionally kept local under
+`benchmarks/` and are not tracked or shipped with the repository.
 
 ## Optional providers: Chatterbox and F5-TTS
 

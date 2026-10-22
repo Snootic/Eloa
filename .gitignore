@@ -19,17 +19,6 @@ models/
 # Local launch scripts
 *.sh
 
-# Benchmark documentation and harnesses (audio stays ignored)
-!benchmarks/chatterbox-emotions/
-benchmarks/chatterbox-emotions/*
-!benchmarks/chatterbox-emotions/*.md
-!benchmarks/chatterbox-emotions/*.py
-!benchmarks/chatterbox-emotions/*.json
-!benchmarks/chatterbox-emotions/controlled/
-benchmarks/chatterbox-emotions/controlled/*
-!benchmarks/chatterbox-emotions/controlled/*.md
-!benchmarks/chatterbox-emotions/controlled/*.json
-
 # Shipped base voices
 !voices/
 voices/*
