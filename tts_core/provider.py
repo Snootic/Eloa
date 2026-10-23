@@ -73,6 +73,9 @@ class SynthesisModel(ABC):
     def close(self) -> None:
         """Release backend resources when the engine unloads this model."""
 
+    def cancel(self) -> None:
+        """Stop an in-progress synthesis without unloading the model."""
+
 
 def concatenate(chunks: Iterable[AudioChunk]) -> AudioChunk:
     """Join provider chunks into one mono float32 array."""

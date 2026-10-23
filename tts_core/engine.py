@@ -32,9 +32,14 @@ class SpeechStream:
     release: Callable[[], None] | None = field(
         default=None, repr=False, compare=False
     )
+    cancel: Callable[[], None] | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def close(self) -> None:
-        """Release the model lease and cancel an unfinished generator."""
+        """Cancel an unfinished generation and release its model lease."""
+        if self.cancel is not None:
+            self.cancel()
         if self.release is not None:
             self.release()
         close = getattr(self.chunks, "close", None)
@@ -460,6 +465,7 @@ class TTSEngine:
                         model=self._fallback_model or "",
                         fallback=True,
                         release=fallback_stream.close,
+                        cancel=fallback_stream.cancel,
                     )
 
         with self._lock:
@@ -498,6 +504,7 @@ class TTSEngine:
                 provider=active.provider.name,
                 model=active.model_name,
                 release=lease.release,
+                cancel=active.synthesis.cancel,
             )
 
     def _serialized(

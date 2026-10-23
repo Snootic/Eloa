@@ -396,6 +396,10 @@ class Qwen3TTSModel(SynthesisModel):
         if self._native is not None:
             self._native.close()
 
+    def cancel(self) -> None:
+        if self._native is not None:
+            self._native.cancel()
+
     def synthesize(
         self,
         voice: QwenVoiceState,

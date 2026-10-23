@@ -121,6 +121,8 @@ class QwenNativeBackend:
         self._voices: dict[
             tuple[str, str, int, int], tuple[np.ndarray, np.ndarray | None]
         ] = {}
+        self._cancel_lock = threading.Lock()
+        self._active_cancel: threading.Event | None = None
 
     def _configure_abi(self) -> None:
         lib = self._lib
@@ -154,10 +156,18 @@ class QwenNativeBackend:
         return raw.decode("utf-8", "replace") if raw else "unknown"
 
     def close(self) -> None:
+        self.cancel()
         ctx = getattr(self, "_ctx", None)
         if ctx:
             self._lib.qt_free(ctx)
             self._ctx = None
+
+    def cancel(self) -> None:
+        """Ask the active qt_synthesize worker to stop."""
+        with self._cancel_lock:
+            event = self._active_cancel
+        if event is not None:
+            event.set()
 
     def __del__(self) -> None:
         self.close()
@@ -223,6 +233,8 @@ class QwenNativeBackend:
         chunks: queue.Queue[np.ndarray | object] = queue.Queue()
         errors: list[str] = []
         cancel = threading.Event()
+        with self._cancel_lock:
+            self._active_cancel = cancel
 
         def on_chunk(ptr: _FLOAT_PTR, n_samples: int, _user: int) -> bool:
             if n_samples > 0:
@@ -301,5 +313,8 @@ class QwenNativeBackend:
         finally:
             cancel.set()
             worker.join()
+            with self._cancel_lock:
+                if self._active_cancel is cancel:
+                    self._active_cancel = None
         if errors:
             raise RuntimeError(errors[0])
