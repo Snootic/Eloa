@@ -108,6 +108,9 @@ PER_REQUEST_OPTIONS = frozenset(
         "timeout",
     }
 )
+# Aliases such as ``qwen3-tts-0.6b`` and ``qwen3-tts-0.6b-q8`` resolve to the
+# same talker/codec files. The alias must not force a second resident model.
+CACHE_KEY_EXCLUDED = PER_REQUEST_OPTIONS | {"model"}
 
 
 @dataclass(frozen=True)
@@ -528,7 +531,7 @@ class Qwen3TTSProvider(TTSProvider):
         return {
             key: value
             for key, value in options.items()
-            if key not in PER_REQUEST_OPTIONS
+            if key not in CACHE_KEY_EXCLUDED
         }
 
     @staticmethod
