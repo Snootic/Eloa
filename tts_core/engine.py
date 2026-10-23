@@ -4,8 +4,8 @@ import json
 import logging
 import threading
 from collections import OrderedDict
-from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,35 @@ class SpeechStream:
     provider: str = ""
     model: str = ""
     fallback: bool = False
+    release: Callable[[], None] | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    def close(self) -> None:
+        """Release the model lease and cancel an unfinished generator."""
+        if self.release is not None:
+            self.release()
+        close = getattr(self.chunks, "close", None)
+        if callable(close):
+            try:
+                close()
+            except (RuntimeError, ValueError):
+                # The generator may be executing in a to_thread worker.
+                pass
+
+
+class _ModelLease:
+    """Idempotent lease shared by generator completion and stream close."""
+
+    def __init__(self, engine: "TTSEngine", key: ModelKey):
+        self._engine = engine
+        self._key = key
+        self._released = False
+
+    def release(self) -> None:
+        if not self._released:
+            self._released = True
+            self._engine._release(self._key)
 
 
 @dataclass(frozen=True)
@@ -430,6 +459,7 @@ class TTSEngine:
                         provider=self._fallback_provider or "",
                         model=self._fallback_model or "",
                         fallback=True,
+                        release=fallback_stream.close,
                     )
 
         with self._lock:
@@ -445,6 +475,7 @@ class TTSEngine:
                 else OPUS_SAMPLE_RATE
             )
             self._acquire(active.key)
+            lease = _ModelLease(self, active.key)
             try:
                 chunks = self._encode(
                     active.synthesis,
@@ -454,11 +485,11 @@ class TTSEngine:
                     active.options,
                 )
             except Exception:
-                self._release(active.key)
+                lease.release()
                 raise
             return SpeechStream(
                 chunks=self._serialized(
-                    active.key,
+                    lease,
                     self._generation_locks[active.key],
                     chunks,
                 ),
@@ -466,11 +497,12 @@ class TTSEngine:
                 audio_format=audio_format,
                 provider=active.provider.name,
                 model=active.model_name,
+                release=lease.release,
             )
 
     def _serialized(
         self,
-        key: ModelKey,
+        lease: _ModelLease,
         lock: threading.Lock,
         chunks: Iterator[bytes],
     ) -> Iterator[bytes]:
@@ -478,7 +510,7 @@ class TTSEngine:
             with lock:
                 yield from chunks
         finally:
-            self._release(key)
+            lease.release()
 
     @staticmethod
     def _encode(
@@ -508,7 +540,6 @@ class TTSEngine:
             if voice_name is None:
                 raise RuntimeError("No voice is selected; call load_voice() first")
             voice = self._voice_caches[active.key][voice_name]
-            self._acquire(active.key)
             return (
                 active.key,
                 self._generation_locks[active.key],
@@ -522,18 +553,22 @@ class TTSEngine:
     ) -> Iterator[bytes]:
         """Stream encoded audio from the active model/voice."""
         key, lock, model, voice, options = self._active_snapshot()
+        self._acquire(key)
+        lease = _ModelLease(self, key)
         try:
             chunks = self._encode(model, voice, text, audio_format, options)
         except Exception:
-            self._release(key)
+            lease.release()
             raise
-        return self._serialized(key, lock, chunks)
+        return self._serialized(lease, lock, chunks)
 
     def generate_full(
         self, text: str, audio_format: AudioFormat = AudioFormat.PCM16
     ) -> bytes:
         """Render the whole utterance through the provider's non-streaming path."""
         key, lock, model, voice, options = self._active_snapshot()
+        self._acquire(key)
+        lease = _ModelLease(self, key)
         try:
             with lock:
                 audio = model.synthesize_all(voice, text, options=options)
@@ -541,7 +576,7 @@ class TTSEngine:
                 return to_pcm16(audio)
             return b"".join(encode_opus([audio], model.sample_rate, audio_format))
         finally:
-            self._release(key)
+            lease.release()
 
     def generate(
         self, text: str, audio_format: AudioFormat = AudioFormat.PCM16

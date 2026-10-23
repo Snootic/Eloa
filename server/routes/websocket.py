@@ -17,6 +17,19 @@ def next_chunk(chunks: Iterator[bytes]):
     return next(chunks, _END)
 
 
+def close_stream(stream) -> None:
+    """Release a provider stream/lock if the WebSocket goes away."""
+    close = getattr(stream, "close", None)
+    if not callable(close):
+        close = getattr(stream.chunks, "close", None)
+    if callable(close):
+        try:
+            close()
+        except (RuntimeError, ValueError):
+            # The generator may currently be executing in the to_thread call.
+            pass
+
+
 @router.websocket("/v1/audio/speech/stream")
 async def speech_stream(websocket: WebSocket):
     try:
@@ -32,6 +45,7 @@ async def speech_stream(websocket: WebSocket):
     await websocket.accept()
 
     engine: TTSEngine = websocket.app.state.engine
+    stream = None
 
     try:
         while True:
@@ -90,3 +104,6 @@ async def speech_stream(websocket: WebSocket):
                 "message": str(error),
             }
         )
+    finally:
+        if stream is not None:
+            close_stream(stream)
