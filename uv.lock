@@ -1498,7 +1498,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.0.0" },
     { name = "openvino", marker = "extra == 'chatterbox-onnx'", specifier = ">=2026.0" },
     { name = "openvino", marker = "extra == 'openvino'", specifier = ">=2026.0" },
-    { name = "pocket-tts", extras = ["quantize"], specifier = ">=2.1.0" },
+    { name = "pocket-tts", extras = ["quantize"], specifier = "==2.1.0" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.9" },
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "sounddevice", specifier = ">=0.5.0" },
