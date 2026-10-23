@@ -20,6 +20,29 @@ from tts_core.audio import AudioChunk
 CODE_BITS = 11
 CODE_MASK = (1 << CODE_BITS) - 1
 _END = object()
+LANGUAGE_NAMES = {
+    "auto": "auto",
+    "zh": "chinese",
+    "chinese": "chinese",
+    "en": "english",
+    "english": "english",
+    "ja": "japanese",
+    "japanese": "japanese",
+    "ko": "korean",
+    "korean": "korean",
+    "de": "german",
+    "german": "german",
+    "fr": "french",
+    "french": "french",
+    "ru": "russian",
+    "russian": "russian",
+    "pt": "portuguese",
+    "portuguese": "portuguese",
+    "es": "spanish",
+    "spanish": "spanish",
+    "it": "italian",
+    "italian": "italian",
+}
 
 _FLOAT_PTR = ctypes.POINTER(ctypes.c_float)
 _I32_PTR = ctypes.POINTER(ctypes.c_int32)
@@ -223,7 +246,8 @@ class QwenNativeBackend:
 
         text_bytes = text.encode("utf-8")
         language = str(options.get("language") or "").strip()
-        lang_bytes = None if language.lower() in ("", "auto") else language.encode()
+        language = LANGUAGE_NAMES.get(language.lower(), language)
+        lang_bytes = None if language.lower() in ("", "auto") else language.encode("utf-8")
         ref_text_bytes = (
             ref_text_path.read_text(encoding="utf-8").strip().encode()
             if ref_text_path is not None

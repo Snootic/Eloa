@@ -433,6 +433,19 @@ class Qwen3TTSModel(SynthesisModel):
             "-",
         ]
         language = str(opts["language"] or "").strip()
+        language = {
+            "auto": "auto",
+            "zh": "chinese",
+            "en": "english",
+            "ja": "japanese",
+            "ko": "korean",
+            "de": "german",
+            "fr": "french",
+            "ru": "russian",
+            "pt": "portuguese",
+            "es": "spanish",
+            "it": "italian",
+        }.get(language.lower(), language)
         if language and language.lower() != "auto":
             command += ["--lang", language]
         if voice.rvq is not None and voice.ref_text is not None:
