@@ -48,7 +48,7 @@ curl -X POST http://127.0.0.1:8082/v1/audio/speech \
 
 `provider` and `model` are optional and fall back to the engine defaults.
 `options` carries provider-specific tuning; for Pocket TTS it accepts
-`temp`, `lsd_decode_steps`, `noise_clamp`, `eos_threshold`, `quantize`, and
+`temp`, `sampler_decode_steps`, `noise_clamp`, `eos_threshold`, `quantize`, and
 `config`. Deployment-wide provider options can be scoped with
 `TTS_PROVIDER_OPTIONS={"qwen3-tts":{...}}`; only the selected provider receives
 that map, so Qwen binary/model paths cannot leak into Pocket or Kokoro.
@@ -204,9 +204,11 @@ fields. In the real host test, the first Qwen request returned Pocket audio in
 3.1 s with `X-TTS-Fallback: 1` while Qwen loaded in the background; the
 next request returned `qwen3-tts` with `X-TTS-Fallback: 0`.
 
-Pocket TTS is pinned to **2.1.0**. The shipped `.safetensors` voice states are
-2.1 states; installing Pocket TTS 4.x makes those voices produce repeating
-garbage. Rebuild after changing the dependency so the image contains 2.1.0.
+Pocket TTS is pinned to **4.0.1**. The shipped Eloa and Helena
+`.safetensors` voice states were regenerated with Pocket TTS 4.0.1 from their
+source WAVs. Older 2.1 voice states are incompatible and produce repeating
+garbage when used with 4.x; the previous states are kept under
+`voices/backups/pocket2.1/`.
 
 On the 4 GB GTX 1650 deployment, Qwen Q8 loading took about 25 s and the first
 Qwen synthesis took about 93 s (17x realtime, ~80 s to first audio) while

@@ -15,7 +15,7 @@ DEFAULT_VOICE_CONDITIONING = "hf://kyutai/tts-voices/alba-mackenna/casual.wav"
 
 POCKET_DEFAULTS: dict[str, Any] = {
     "temp": 0.7,
-    "lsd_decode_steps": 2,
+    "sampler_decode_steps": 2,
     "noise_clamp": None,
     "eos_threshold": -3.0,
     "quantize": False,
